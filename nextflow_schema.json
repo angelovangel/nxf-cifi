@@ -27,6 +27,11 @@
                     "default": 0,
                     "minimum": 0
                 },
+                "map_ont": {
+                    "type": "boolean",
+                    "description": "Map the ONT reads (Q20+, minimap2 lr:hq) to hap1 / hap2 (scaffolds with CiFi, contigs otherwise): sorted BAM + CSI, per-sequence coverage, mapping rate",
+                    "default": false
+                },
                 "assembly": {
                     "type": "string",
                     "description": "Existing assembly hap1.fa[,hap2.fa] (.gz ok): skip hifiasm, scaffold these with CiFi and evaluate them. Needs --cifi; --hifi / --meryl_db optional (merqury QV), --ont optional (reads QC only)",

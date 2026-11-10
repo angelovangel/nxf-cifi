@@ -222,6 +222,7 @@ for spec in specs:
         contact=sorted(glob.glob(os.path.join(path, "scaffolds", "**", "*.png"), recursive=True)),
         cifi=sorted(glob.glob(os.path.join(path, "cifi", "stats", "*.cifi_stats.json"))),
         markdup=sorted(glob.glob(os.path.join(path, "cifi", "markdup", "*.markdup.tsv"))),
+        ontcov=sorted(glob.glob(os.path.join(path, "ont_mapping", "*.ont.coverage.tsv"))),
         cifi_html=sorted(glob.glob(os.path.join(path, "cifi", "**", "*.html"), recursive=True))))
 
     hq = os.path.join(ev, "merqury", "haps.qv")
@@ -479,6 +480,55 @@ if DATA["cifi"] or MARKDUP:
           '<h3>Usable segments per CiFi read</h3><p class="note">Share of CiFi reads with k segments mapped at the '
           'MAPQ threshold (k ≥ 2 give contacts, k ≥ 3 are multi-way).</p><div id="cifi-card" class="nx"></div>') + '</section>')
 
+# ---------------- ONT reads mapped to hap1 / hap2 (--map_ont): samtools coverage + flagstat
+ONT, ONT_SEQ = [], []   # per assembly; per sequence >= 1 Mb
+for run in RUNS:
+    for cf in run.get("ontcov", []):
+        base = os.path.basename(cf)[:-len(".ont.coverage.tsv")]
+        m = re.search(r"\.(hap[12])\.", base)
+        lab = f'{run["label"]}_{m[1]}' if m else f'{run["label"]}_{base}'
+        seqs = []
+        for l in open(cf):
+            if l.startswith("#"): continue
+            f = l.rstrip("\n").split("\t")
+            if len(f) < 9: continue
+            L = int(f[2]) - int(f[1]) + 1
+            seqs.append((f[0], L, int(f[3]), int(f[4]), float(f[6]), float(f[8])))
+        tot = sum(x[1] for x in seqs)
+        if not tot: continue
+        fs = {}
+        ff = cf[:-len(".coverage.tsv")] + ".flagstat.tsv"
+        if os.path.exists(ff):
+            for l in open(ff):
+                f = l.rstrip("\n").split("\t")
+                if len(f) >= 3: fs[f[2]] = f[0]
+        depth = sum(x[1] * x[4] for x in seqs) / tot
+        big = [x for x in seqs if x[1] >= 1_000_000]
+        ONT.append([lab, num(fs.get("primary")), num(fs.get("primary mapped %")), depth,
+                    100 * sum(x[3] for x in seqs) / tot, len(seqs),
+                    sum(1 for x in big if x[4] < 0.5 * depth or x[4] > 2 * depth), base])
+        ONT_SEQ += [[lab, x[0], x[1], x[4], 100 * x[3] / x[1], x[5], x[4] / depth if depth else None] for x in big]
+if ONT:
+    f2 = lambda v, d=2: "NA" if v is None else f"{v:,.{d}f}"
+    parts.append(
+        '<section id="ont"><h2>ONT read coverage</h2>'
+        '<p class="note">ONT reads mapped with minimap2 to each haplotype (scaffolds with CiFi, contigs otherwise); '
+        'primary alignments, from <code>samtools flagstat</code> and <code>samtools coverage</code>. Depth is the '
+        'length-weighted mean over all sequences. A sequence ≥ 1 Mb at less than half or more than twice that depth '
+        'is flagged: possible collapsed repeat, duplication, or contamination. BAMs (with CSI index) are in '
+        '<code>ont_mapping/</code> for IGV.</p>'
+        + table(["Haplotype", "Reads", "% mapped", "Mean depth (×)", "% bases covered", "Sequences", "Flagged ≥ 1 Mb"],
+                [[(o[0], ""), (f2(o[1], 0), "", o[1]), (f2(o[2]), "", o[2]), (f2(o[3], 1), "", o[3]),
+                  (f2(o[4]), "", o[4]), (f"{o[5]:,}", "", o[5]), (str(o[6]), "", o[6])] for o in ONT])
+        + ('' if not ONT_SEQ else '<h3>Sequences ≥ 1 Mb</h3><p class="note">Click a header to sort; flagged rows '
+           'are outside 0.5–2× the haplotype&#39;s mean depth.</p>' +
+           table(["Haplotype", "Sequence", "Length (Mb)", "Mean depth (×)", "% covered", "Mean MAPQ", "Depth / mean"],
+                 [[(r[0], ""), (r[1], ""), (f2(r[2] / 1e6), "", r[2]), (f2(r[3], 1), "", r[3]), (f2(r[4]), "", r[4]),
+                   (f2(r[5], 1), "", r[5]),
+                   (f2(r[6]), "worse" if r[6] is not None and (r[6] < 0.5 or r[6] > 2) else "", r[6])] for r in ONT_SEQ],
+                 numeric_from=2))
+        + '</section>')
+
 for run in RUNS:
     lab = run["label"]
     sec = [f'<section id="run-{esc(lab)}"><h2>Run {esc(lab)}</h2><p class="note"><code>{esc(run["path"])}</code></p>']
@@ -542,7 +592,7 @@ for run in RUNS:
     parts.append("".join(sec) + "</section>")
 
 CSS = r"""
-:root { --bg:#f7f7f5; --fg:#1d1f21; --muted:#676c73; --line:#e1e2de; --card:#ffffff; --accent:#1f5fa8; --best:#e3edf9; --hover:#f1f4f8; }
+:root { --bg:#f7f7f5; --fg:#1d1f21; --muted:#676c73; --line:#e1e2de; --card:#ffffff; --accent:#1f5fa8; --best:#e3edf9; --worse:#fbe5e1; --hover:#f1f4f8; }
 * { box-sizing:border-box }
 html { color-scheme: light }
 body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif }
@@ -566,6 +616,7 @@ th::after { content:"↕"; position:absolute; right:6px; color:#b5b9bf; font-siz
 th[data-dir="asc"]::after { content:"▲"; color:var(--accent) } th[data-dir="desc"]::after { content:"▼"; color:var(--accent) }
 th.num, td.num { text-align:right; font-variant-numeric:tabular-nums }
 td.best { font-weight:700; background:var(--best) }
+td.worse { font-weight:700; background:var(--worse) }
 tbody tr:hover td { background:var(--hover) } tbody tr:hover td.best { background:var(--best) }
 tbody tr:last-child td { border-bottom:none }
 figure { margin:0 0 18px; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px }
@@ -1013,7 +1064,7 @@ document.querySelectorAll('.dp').forEach(h => dotplot(h, D.dp[h.dataset.key]));
 })();
 """
 
-nav = '<a href="#assemblies">Assemblies</a><a href="#plots">Plots</a>' + ('<a href="#cifi">CiFi contacts</a>' if DATA["cifi"] or MARKDUP else "") + "".join(
+nav = '<a href="#assemblies">Assemblies</a><a href="#plots">Plots</a>' + ('<a href="#cifi">CiFi contacts</a>' if DATA["cifi"] or MARKDUP else "") + ('<a href="#ont">ONT coverage</a>' if ONT else "") + "".join(
     f'<a href="#run-{esc(r["label"])}">{esc(r["label"])}</a>' for r in RUNS)
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 data_json = json.dumps(DATA, separators=(",", ":")).replace("</", "<\\/")

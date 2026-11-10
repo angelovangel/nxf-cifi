@@ -48,6 +48,13 @@ Not included from the paper: TAD calling (TopDom) and Hi-C correlation, which ne
 Add `--ref ref.fa` to dot plot every assembly against a reference. `--dotplot_min_aln` (10 kb) and
 `--dotplot_min_seq` (500 kb) drop short alignments and sequences from the plots; `--skip_dotplot` turns them off.
 
+Add `--map_ont` to map the ONT reads to hap1 and hap2 (the scaffolds with `--cifi`, the contigs otherwise) with minimap2
+`-x lr:hq` (Q20+ ONT reads). `ont_mapping/` gets a sorted BAM with a
+CSI index (chromosomes can exceed the BAI limit) for IGV, `samtools coverage` per sequence and `samtools flagstat`.
+The report shows the mapping rate, mean depth and breadth per haplotype, and flags sequences ≥ 1 Mb at less than half or
+more than twice the haplotype's mean depth (collapsed repeats, duplications, contamination). With ultra-long data this
+step takes hours.
+
 ### CiFi on an existing assembly
 
 `--assembly hap1.fa[,hap2.fa]` skips hifiasm and runs only the CiFi part on contigs you already have:
@@ -122,7 +129,7 @@ The pipeline runs the same script on each run to make `report/report.html`.
 | CiFi PCR duplicates | `quay.io/biocontainers/pbmarkdup:1.2.0--h9ee0642_0` |
 | cifi qc / digest / contacts | `quay.io/biocontainers/cifi:1.1.0--py312h0c6b66a_0` |
 | hifiasm | `quay.io/biocontainers/hifiasm:0.25.0--h5ca1c30_0` |
-| segment mapping, dot plot alignment | `community.wave.seqera.io/library/minimap2_samtools_procps-ng:a6a2be08b29bce9f` |
+| segment mapping, dot plot alignment, ONT mapping | `community.wave.seqera.io/library/minimap2_samtools_procps-ng:a6a2be08b29bce9f` |
 | yahs + juicer | `quay.io/biocontainers/yahs:1.2.2--h577a1d6_1` |
 | juicer_tools (`--juicer_jar`) | `eclipse-temurin:21-jre` |
 | PretextMap / PretextSnapshot | `quay.io/biocontainers/pretextmap:0.2.4--hd63eeec_0`, `pretextsnapshot:0.1.1--hc52dbad_0` |

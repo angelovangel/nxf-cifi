@@ -14,6 +14,7 @@
  * Evaluation     : contiguity, telomeres (TTTAGGG)n, compleasm (BUSCO genes), merqury (QV, completeness),
  *                  minimap2 dot plots (hap2 vs hap1, optionally every assembly vs --ref)
  * Report         : report/report.html (bin/compare_assemblies.sh on this run)
+ * ONT mapping    : --map_ont: minimap2 ONT reads -> hap1 / hap2 (scaffolds with CiFi), coverage + mapping rate
  * Reads QC       : faster-report (github.com/angelovangel/faster-report) for HiFi, ONT and CiFi reads
  */
 
@@ -242,6 +243,36 @@ process MAP_SEGMENTS {
     stub:
     """
     touch ${name}.segments.ns.bam; echo "" | gzip -c > ${name}.segments.tsv.gz
+    """
+}
+
+// ONT reads on hap1 / hap2 (scaffolds with CiFi, contigs otherwise): sorted BAM (+ CSI, chromosomes can exceed
+// the 512 Mb BAI limit), per-sequence coverage and mapping rate
+process MAP_ONT {
+    tag "$name"
+    label 'big'
+    publishDir "${params.outdir}/ont_mapping", mode: params.publish_mode
+    input:
+        tuple val(name), path(fa)
+        path(ont, stageAs: 'ont/*')
+    output:
+        tuple val(name), path("${name}.ont.bam"), path("${name}.ont.bam.csi"), emit: bam
+        path "${name}.ont.{coverage,flagstat}.tsv", emit: stats
+    script:
+    def mm2t = task.cpus > 5 ? task.cpus - 4 : 1
+    def st = task.cpus > 4 ? 4 : 1
+    """
+    minimap2 -t $mm2t -ax lr:hq --secondary=no $fa ${[ont].flatten().join(' ')} 2> minimap2.log \\
+        | samtools sort -@ $st -m 2G -T tmp.sort -o ${name}.ont.bam
+    samtools index -c -@ $st ${name}.ont.bam
+    samtools coverage ${name}.ont.bam > ${name}.ont.coverage.tsv
+    samtools flagstat -@ $st -O tsv ${name}.ont.bam > ${name}.ont.flagstat.tsv
+    """
+    stub:
+    """
+    touch ${name}.ont.bam ${name}.ont.bam.csi
+    printf "#rname\\tstartpos\\tendpos\\tnumreads\\tcovbases\\tcoverage\\tmeandepth\\tmeanbaseq\\tmeanmapq\\nctg1\\t1\\t8\\t10\\t8\\t100\\t25.5\\t30\\t60\\n" > ${name}.ont.coverage.tsv
+    printf "100\\t0\\tprimary\\n95\\t0\\tprimary mapped\\n95.00%%\\tN/A\\tprimary mapped %%\\n" > ${name}.ont.flagstat.tsv
     """
 }
 
@@ -481,6 +512,7 @@ process REPORT {
         path(readsqc,   stageAs: 'reads/*')
         path(cifistats, stageAs: 'cifi/stats/*')
         path(markdup,   stageAs: 'cifi/markdup/*')
+        path(ontcov,    stageAs: 'ont_mapping/*')
     output: path 'report'
     script:
     def label = params.prefix.toString().replaceAll(/[^A-Za-z0-9_]/, '_')
@@ -598,6 +630,16 @@ workflow {
         ch_merq_files = MERQURY.out.files
     }
 
+    // ONT reads on hap1 / hap2: scaffolds with CiFi, contigs otherwise (--map_ont)
+    ch_ont_cov = Channel.empty()
+    if (params.map_ont && params.ont) {
+        def ch_targets = (params.cifi ? ch_scaf : ch_contigs)
+            .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
+        ch_ont_cov = MAP_ONT(ch_targets, ch_ont).stats
+    } else if (params.map_ont) {
+        log.warn "--map_ont without --ont: no ONT reads to map"
+    }
+
     // dot plots: hap2 vs hap1 (contigs, scaffolds) and, with --ref, every assembly vs the reference
     ch_dot = Channel.empty()
     if (!params.skip_dotplot) {
@@ -630,6 +672,7 @@ workflow {
         ch_contact.flatten().collect().ifEmpty([]),
         ch_readsqc.collect().ifEmpty([]),
         ch_cifi_stats.flatten().collect().ifEmpty([]),
-        ch_markdup.collect().ifEmpty([])
+        ch_markdup.collect().ifEmpty([]),
+        ch_ont_cov.flatten().collect().ifEmpty([])
     )
 }
