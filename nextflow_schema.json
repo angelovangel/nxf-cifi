@@ -1,0 +1,355 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/angelovangel/nxf-cifi/main/nextflow_schema.json",
+    "title": "nxf-cifi pipeline parameters",
+    "description": "hifiasm (HiFi + ONT UL) assembly, optional CiFi phasing + YaHS scaffolding, and evaluation",
+    "type": "object",
+    "$defs": {
+        "input_options": {
+            "title": "Reads",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Reads for assembly from scratch (--hifi and --ont), or an existing assembly with --assembly + --cifi.",
+            "properties": {
+                "hifi": {
+                    "type": "string",
+                    "description": "HiFi reads: .bam / .fastq(.gz) / .fasta(.gz); comma-separated or glob",
+                    "fa_icon": "fas fa-file"
+                },
+                "ont": {
+                    "type": "string",
+                    "description": "ONT ultra-long reads: .fastq(.gz); comma-separated or glob",
+                    "fa_icon": "fas fa-file"
+                },
+                "ont_minlen": {
+                    "type": "integer",
+                    "description": "Drop ONT reads shorter than this (0 = keep all)",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "assembly": {
+                    "type": "string",
+                    "description": "Existing assembly hap1.fa[,hap2.fa] (.gz ok): skip hifiasm, scaffold these with CiFi and evaluate them. Needs --cifi; --hifi / --meryl_db optional (merqury QV), --ont optional (reads QC only)",
+                    "pattern": "^[^,]+(,[^,]+)?$"
+                }
+            }
+        },
+        "cifi_options": {
+            "title": "CiFi",
+            "type": "object",
+            "fa_icon": "fas fa-link",
+            "description": "CiFi reads turn on phasing and scaffolding.",
+            "properties": {
+                "cifi": {
+                    "type": "string",
+                    "description": "CiFi reads (PacBio BAM or FASTQ(.gz)); comma-separated or glob"
+                },
+                "enzyme": {
+                    "type": "string",
+                    "description": "Restriction enzyme of the CiFi library (cifi built-ins)",
+                    "default": "HindIII",
+                    "enum": [
+                        "HindIII",
+                        "DpnII",
+                        "MboI",
+                        "Sau3AI",
+                        "NlaIII"
+                    ]
+                },
+                "juicer_jar": {
+                    "type": "string",
+                    "description": "juicer_tools .jar to also make the Juicebox .hic file",
+                    "format": "file-path",
+                    "exists": true
+                },
+                "contig_ec": {
+                    "type": "boolean",
+                    "description": "Let yahs break contigs",
+                    "default": false
+                },
+                "skip_pretext": {
+                    "type": "boolean",
+                    "description": "No PretextMap contact map",
+                    "default": false
+                },
+                "cifi_mapq": {
+                    "type": "integer",
+                    "description": "Min segment MAPQ for yahs scaffolding (cifi contacts -q)",
+                    "default": 0,
+                    "minimum": 0,
+                    "hidden": true
+                },
+                "cifi_min_seg": {
+                    "type": "integer",
+                    "description": "cifi digest -m: min segments per read",
+                    "default": 1,
+                    "minimum": 1,
+                    "hidden": true
+                },
+                "cifi_min_seg_len": {
+                    "type": "integer",
+                    "description": "cifi digest -l: min segment length (bp)",
+                    "default": 20,
+                    "minimum": 1,
+                    "hidden": true
+                },
+                "cifi_stats_mapq": {
+                    "type": "integer",
+                    "description": "Min segment MAPQ for the contact analysis",
+                    "default": 1,
+                    "minimum": 0
+                },
+                "cifi_stats_max_pairs": {
+                    "type": "integer",
+                    "description": "Pairwise contacts analysed for P(s) and cis/trans (segment statistics always use all reads)",
+                    "default": 20000000,
+                    "minimum": 1
+                },
+                "cifi_stats_min_scaf": {
+                    "type": "integer",
+                    "description": "Scaffolds >= this (bp) are chromosomes for cis/trans",
+                    "default": 1000000,
+                    "minimum": 1
+                },
+                "cifi_stats_bin": {
+                    "type": "integer",
+                    "description": "Segment coverage bin (bp)",
+                    "default": 100000,
+                    "minimum": 1
+                },
+                "skip_cifi_stats": {
+                    "type": "boolean",
+                    "description": "No CiFi contact analysis",
+                    "default": false
+                },
+                "cifi_rmdup": {
+                    "type": "boolean",
+                    "description": "Remove PCR duplicates (pbmarkdup) before digestion",
+                    "default": false
+                },
+                "skip_cifi_markdup": {
+                    "type": "boolean",
+                    "description": "No pbmarkdup duplicate rate",
+                    "default": false
+                }
+            }
+        },
+        "assembly_options": {
+            "title": "Assembly",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "hifiasm options.",
+            "properties": {
+                "prefix": {
+                    "type": "string",
+                    "description": "Output prefix",
+                    "default": "asm",
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                },
+                "ploidy": {
+                    "type": "integer",
+                    "description": "hifiasm --n-hap",
+                    "default": 2,
+                    "minimum": 1
+                },
+                "purge": {
+                    "type": "integer",
+                    "description": "hifiasm -l (0 for inbred lines); hifiasm default when unset",
+                    "minimum": 0,
+                    "maximum": 3
+                },
+                "hifiasm_args": {
+                    "type": "string",
+                    "description": "Extra hifiasm arguments, quoted",
+                    "default": ""
+                }
+            }
+        },
+        "evaluation_options": {
+            "title": "Evaluation",
+            "type": "object",
+            "fa_icon": "fas fa-check",
+            "description": "Contiguity, telomeres, compleasm (BUSCO genes), merqury and dot plots.",
+            "properties": {
+                "lineage": {
+                    "type": "string",
+                    "description": "compleasm lineage",
+                    "default": "embryophyta"
+                },
+                "lineage_dir": {
+                    "type": "string",
+                    "description": "Pre-downloaded compleasm lineage directory (downloaded once if unset)",
+                    "format": "directory-path",
+                    "exists": true
+                },
+                "kmer": {
+                    "type": "integer",
+                    "description": "merqury k-mer size",
+                    "default": 21,
+                    "minimum": 1
+                },
+                "meryl_db": {
+                    "type": "string",
+                    "description": "Existing meryl DB of the HiFi reads (reuse between runs)",
+                    "format": "directory-path",
+                    "exists": true
+                },
+                "telo_motif_f": {
+                    "type": "string",
+                    "description": "Telomere motif, G-rich strand",
+                    "default": "TTTAGGG",
+                    "pattern": "^[ACGTacgt]+$",
+                    "hidden": true
+                },
+                "telo_motif_r": {
+                    "type": "string",
+                    "description": "Telomere motif, C-rich strand",
+                    "default": "CCCTAAA",
+                    "pattern": "^[ACGTacgt]+$",
+                    "hidden": true
+                },
+                "telo_window": {
+                    "type": "integer",
+                    "description": "bp examined at each sequence end for telomeres",
+                    "default": 10000,
+                    "minimum": 1,
+                    "hidden": true
+                },
+                "telo_min": {
+                    "type": "integer",
+                    "description": "Motif copies in the window that count as a telomere",
+                    "default": 30,
+                    "minimum": 1,
+                    "hidden": true
+                },
+                "report_subsample": {
+                    "type": "number",
+                    "description": "Fraction of reads for faster-report plots / k-mers",
+                    "default": 0.1,
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                },
+                "skip_busco": {
+                    "type": "boolean",
+                    "description": "Skip compleasm",
+                    "default": false
+                },
+                "skip_merqury": {
+                    "type": "boolean",
+                    "description": "Skip merqury",
+                    "default": false
+                },
+                "skip_reads_qc": {
+                    "type": "boolean",
+                    "description": "Skip faster-report reads QC",
+                    "default": false
+                }
+            }
+        },
+        "dotplot_options": {
+            "title": "Dot plots",
+            "type": "object",
+            "fa_icon": "fas fa-chart-area",
+            "description": "minimap2 dot plots: hap2 vs hap1 and, with --ref, every assembly vs the reference.",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Reference FASTA: also dot plot every assembly against it",
+                    "format": "file-path",
+                    "exists": true
+                },
+                "dotplot_preset": {
+                    "type": "string",
+                    "description": "minimap2 preset for the dot plots",
+                    "default": "asm5",
+                    "enum": [
+                        "asm5",
+                        "asm10",
+                        "asm20"
+                    ]
+                },
+                "dotplot_min_aln": {
+                    "type": "integer",
+                    "description": "Alignments shorter than this are ignored",
+                    "default": 10000,
+                    "minimum": 0
+                },
+                "dotplot_min_seq": {
+                    "type": "integer",
+                    "description": "Sequences shorter than this are not drawn",
+                    "default": 500000,
+                    "minimum": 0
+                },
+                "skip_dotplot": {
+                    "type": "boolean",
+                    "description": "No dot plots",
+                    "default": false
+                }
+            }
+        },
+        "other_options": {
+            "title": "Other",
+            "type": "object",
+            "fa_icon": "fas fa-cog",
+            "description": "Output and resources.",
+            "properties": {
+                "outdir": {
+                    "type": "string",
+                    "description": "Output directory",
+                    "default": "asm_out",
+                    "format": "directory-path"
+                },
+                "publish_mode": {
+                    "type": "string",
+                    "description": "How results are published",
+                    "default": "copy",
+                    "enum": [
+                        "copy",
+                        "link",
+                        "symlink",
+                        "rellink",
+                        "copyNoFollow",
+                        "move"
+                    ]
+                },
+                "max_cpus": {
+                    "type": "integer",
+                    "description": "Upper CPU limit for any process",
+                    "default": 32,
+                    "minimum": 1
+                },
+                "max_memory": {
+                    "type": "string",
+                    "description": "Upper memory limit for any process",
+                    "default": "256 GB",
+                    "pattern": "^\\d+(\\.\\d+)?\\s*[KMGT]?B$"
+                },
+                "monochrome_logs": {
+                    "type": "boolean",
+                    "description": "No colours in the log",
+                    "default": false
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_options"
+        },
+        {
+            "$ref": "#/$defs/cifi_options"
+        },
+        {
+            "$ref": "#/$defs/assembly_options"
+        },
+        {
+            "$ref": "#/$defs/evaluation_options"
+        },
+        {
+            "$ref": "#/$defs/dotplot_options"
+        },
+        {
+            "$ref": "#/$defs/other_options"
+        }
+    ]
+}

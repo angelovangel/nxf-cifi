@@ -1,6 +1,6 @@
 # nxf-cifi
 
-It assembles plant genomes with hifiasm from HiFi and ONT ultra-long reads. With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
+Genome assembly with hifiasm from HiFi and ONT ultra-long reads. With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
 
 ```
 without --cifi : reads QC -> hifiasm --ul -> contigs (primary, hap1, hap2) -> evaluation
@@ -69,7 +69,9 @@ nextflow run nxf-cifi --assembly asm_noCiFi/fasta/myplant.bp.hap1.p_ctg.fa,asm_n
 Inputs can be comma-separated lists or quoted globs (`--hifi 'reads/*.bam'`).
 Set `--max_cpus` / `--max_memory` to the machine size; hifiasm gets the full amount and the other steps are capped at it.
 Add `-resume` to continue a run, `-profile singularity,slurm` on a cluster.
-Run `nextflow run nxf-cifi --help` for all options. The defaults match `run_hifiasm.sh`.
+Run `nextflow run nxf-cifi --help` for all options (`--help <param>` for one, `--showHidden` for the advanced ones).
+Options are defined in `nextflow_schema.json` and checked at start by the nf-schema plugin (Nextflow ≥ 25.04);
+`--monochrome_logs` turns colours off. The defaults match `run_hifiasm.sh`.
 
 ## Output (same layout as run_hifiasm.sh)
 
@@ -125,5 +127,5 @@ The pipeline runs the same script on each run to make `report/report.html`.
 | juicer_tools (`--juicer_jar`) | `eclipse-temurin:21-jre` |
 | PretextMap / PretextSnapshot | `quay.io/biocontainers/pretextmap:0.2.4--hd63eeec_0`, `pretextsnapshot:0.1.1--hc52dbad_0` |
 | stats, telomeres, summary, dot plots, CiFi contact analysis, report | `community.wave.seqera.io/library/python_matplotlib_procps-ng:e896924bb279b00c` |
-| compleasm | `quay.io/biocontainers/compleasm:0.2.7--pyh7e72e81_1` |
+| compleasm | `quay.io/biocontainers/compleasm:0.2.9--pyhdfd78af_0` |
 | meryl / merqury | `quay.io/biocontainers/merqury:1.3--hdfd78af_4` |

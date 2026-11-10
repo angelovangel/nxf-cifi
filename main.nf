@@ -19,61 +19,8 @@
 
 nextflow.enable.dsl = 2
 
-def helpMessage() {
-    log.info """
-    nxf-cifi
-
-    Usage
-      nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --outdir asm_noCiFi --prefix myplant
-      nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --cifi cifi.bam --enzyme HindIII \\
-                              --outdir asm_CiFi --prefix myplant
-      nextflow run nxf-cifi --assembly hap1.fa,hap2.fa --cifi cifi.bam --enzyme HindIII --outdir asm_CiFiScaf \\
-                              [--hifi hifi.bam | --meryl_db asm_noCiFi/eval/merqury/hifi.k21.meryl]
-      compare runs afterwards with bin/compare_assemblies.sh -d noCiFi=asm_noCiFi -d CiFi=asm_CiFi ...
-
-    Required (assembly from reads)
-      --hifi           HiFi reads: .bam / .fastq(.gz) / .fasta(.gz); comma-separated or glob
-      --ont            ONT ultra-long reads: .fastq(.gz); comma-separated or glob
-    or an existing assembly (skips hifiasm; needs --cifi)
-      --assembly       hap1.fa[,hap2.fa] (.gz ok): scaffold these with CiFi and evaluate them.
-                       --hifi / --meryl_db optional (merqury QV), --ont optional (reads QC only)
-    CiFi (optional; turns on phasing + scaffolding)
-      --cifi           CiFi reads (PacBio BAM or FASTQ(.gz)); comma-separated or glob
-      --enzyme         restriction enzyme of the CiFi library                [${params.enzyme}]
-      --juicer_jar     juicer_tools .jar to also make the Juicebox .hic file
-      --contig_ec      let yahs break contigs                                [${params.contig_ec}]
-      --skip_pretext   no PretextMap contact map
-      --cifi_stats_mapq      min segment MAPQ for the contact analysis      [${params.cifi_stats_mapq}]
-      --cifi_stats_max_pairs pairwise contacts analysed for P(s), cis/trans [${params.cifi_stats_max_pairs}]
-      --cifi_stats_min_scaf  scaffolds >= this are chromosomes (cis/trans)  [${params.cifi_stats_min_scaf}]
-      --cifi_stats_bin       segment coverage bin (bp)                      [${params.cifi_stats_bin}]
-      --skip_cifi_stats      no CiFi contact analysis
-      --cifi_rmdup           remove PCR duplicates (pbmarkdup) before digestion   [${params.cifi_rmdup}]
-      --skip_cifi_markdup    no pbmarkdup duplicate rate
-    Assembly
-      --prefix         output prefix                                         [${params.prefix}]
-      --ploidy         hifiasm --n-hap                                       [${params.ploidy}]
-      --purge          hifiasm -l (0 for inbred lines)                       [hifiasm default]
-      --ont_minlen     drop ONT reads shorter than this (0 = keep all)       [${params.ont_minlen}]
-      --hifiasm_args   extra hifiasm arguments, quoted                       ['']
-    Evaluation
-      --lineage        compleasm lineage                                     [${params.lineage}]
-      --lineage_dir    pre-downloaded compleasm lineage dir                  [downloaded once]
-      --kmer           merqury k-mer size                                    [${params.kmer}]
-      --meryl_db       existing meryl DB of the HiFi reads (reuse between runs)
-      --ref            reference FASTA: also dot plot every assembly against it
-      --dotplot_preset minimap2 preset for the dot plots                     [${params.dotplot_preset}]
-      --dotplot_min_aln alignments shorter than this are ignored            [${params.dotplot_min_aln}]
-      --dotplot_min_seq sequences shorter than this are not drawn           [${params.dotplot_min_seq}]
-      --skip_busco --skip_merqury --skip_reads_qc --skip_dotplot
-    Other
-      --outdir         output directory                                      [${params.outdir}]
-      --max_cpus / --max_memory   upper limits for any process               [${params.max_cpus} / ${params.max_memory}]
-      --publish_mode   copy / link / symlink                                 [${params.publish_mode}]
-
-    Profiles: docker (default), singularity, slurm.  Rerun with -resume to continue.
-    """.stripIndent()
-}
+// --help, parameter validation and the run summary come from nextflow_schema.json (nf-schema plugin)
+include { validateParameters; paramsSummaryLog } from 'plugin/nf-schema'
 
 def readFiles(p) {
     def pats = p instanceof List ? p : p.toString().tokenize(',')
@@ -546,15 +493,15 @@ process REPORT {
 
 /* =========================================================================== workflow */
 workflow {
-    if (params.help) { helpMessage(); exit 0 }
+    validateParameters()
+    log.info paramsSummaryLog(workflow)
     def asmFiles = params.assembly ? params.assembly.toString().tokenize(',').collect { it.trim() } : []
     if (params.assembly) {
-        if (!params.cifi) { helpMessage(); error "--assembly needs --cifi (CiFi scaffolding of an existing assembly)" }
+        if (!params.cifi) error "--assembly needs --cifi (CiFi scaffolding of an existing assembly); see --help"
         if (asmFiles.size() > 2) error "--assembly takes one or two FASTAs (hap1[,hap2]), got ${asmFiles.size()}"
-    } else if (!params.hifi || !params.ont) { helpMessage(); error "--hifi and --ont are required (or --assembly + --cifi)" }
+    } else if (!params.hifi || !params.ont) error "--hifi and --ont are required (or --assembly + --cifi); see --help"
     // name of the assembly set: hifiasm bp (no CiFi) / hic (CiFi phasing) or asm (--assembly)
     def mode = params.assembly ? 'asm' : params.cifi ? 'hic' : 'bp'
-    log.info "nxf-cifi | prefix=${params.prefix} | ${params.assembly ? 'existing assembly: ' + asmFiles.join(', ') : 'ploidy=' + params.ploidy + ' purge=' + (params.purge ?: 'default')} | CiFi: ${params.cifi ?: 'no'} | outdir=${params.outdir}"
 
     // ---------------------------------------------------------------- reads
     // BAM -> FASTQ: HiFi always (hifiasm input), CiFi only for the reads QC (cifi itself reads the BAM)
