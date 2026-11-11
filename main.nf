@@ -60,31 +60,40 @@ process ONT_FILTER {
     """
 }
 
+// one report for all reads (HiFi, ONT, CiFi); files are prefixed with their kind, platform / file type are
+// 'multiple' when mixed, run info (date, flow cell, basecaller) only for a single platform
 process FASTER_REPORT {
-    tag "$kind"
     label 'mid'
     errorStrategy 'ignore'
     publishDir "${params.outdir}/reads", mode: params.publish_mode
-    input:  tuple val(kind), path('reads/*'), val(filetype)
-    output: path "${kind}.faster-report.html"
+    input:  tuple val(kinds), path(files, stageAs: 'in/?/*'), val(filetypes)
+    output: path "reads.faster-report.html"
     script:
-    def type = kind == 'ont' ? 'ont' : 'pacbio'
+    def platforms = kinds.collect { it == 'ont' ? 'ont' : 'pacbio' }.unique()
+    def platform = platforms.size() > 1 ? 'multiple' : platforms[0]
+    def ftypes = filetypes.unique()
+    def filetype = ftypes.size() > 1 ? 'multiple' : ftypes[0]
     """
+    mkdir reads      # in/<n>/<file> -> reads/<kind>.<file>, in the order of kinds
+    i=1; for k in ${kinds.join(' ')}; do for f in in/\$i/*; do b=\$(basename \$f); [[ \$b == \$k* ]] || b=\$k.\$b; ln -s ../\$f reads/\$b; done; i=\$((i + 1)); done
     # as in angelovangel/faster-report main.nf: assets + run info from the first read header
     cp /temp/custom.css ./custom.css 2>/dev/null || true
     mkdir -p www && cp -r /temp/www/*.png ./www/ 2>/dev/null || true
-    IFS=, read -r d_platform d_flowcell d_rundate d_basecall d_mods d_ft < <(get-header-data.sh reads) || true
     opts=()
-    [[ -n "\${d_rundate:-}"  && "\$d_rundate"  != NA ]] && opts+=(-d "\$d_rundate")
-    [[ -n "\${d_flowcell:-}" && "\$d_flowcell" != NA ]] && opts+=(-f "\$d_flowcell")
-    [[ -n "\${d_basecall:-}" && "\$d_basecall" != NA ]] && opts+=(-b "\$d_basecall")
-    [[ -n "\${d_mods:-}"     && "\$d_mods"     != - ]]  && opts+=(-m "\$d_mods")
-    /temp/faster-report.R -p reads -r '\\.(fastq|fq|fasta)(\\.gz)?\$' -t $type -y $filetype \\
-        "\${opts[@]}" -x ${params.report_subsample} -o ${kind}.faster-report.html
+    if [[ ${platform} != multiple ]]; then
+        IFS=, read -r d_platform d_flowcell d_rundate d_basecall d_mods d_ft < <(get-header-data.sh reads) || true
+        [[ -n "\${d_rundate:-}"  && "\$d_rundate"  != NA ]] && opts+=(-d "\$d_rundate")
+        [[ -n "\${d_flowcell:-}" && "\$d_flowcell" != NA ]] && opts+=(-f "\$d_flowcell")
+        [[ -n "\${d_basecall:-}" && "\$d_basecall" != NA ]] && opts+=(-b "\$d_basecall")
+        [[ -n "\${d_mods:-}"     && "\$d_mods"     != - ]]  && opts+=(-m "\$d_mods")
+    fi
+    /temp/faster-report.R -p reads -r '\\.(fastq|fq|fasta)(\\.gz)?\$' -t ${platform} -y ${filetype} \\
+        "\${opts[@]}" -x ${params.report_subsample} -o reads.faster-report.html
     """
     stub:
+    def platforms = kinds.collect { it == 'ont' ? 'ont' : 'pacbio' }.unique()
     """
-    touch ${kind}.faster-report.html
+    echo "${platforms.size() > 1 ? 'multiple' : platforms[0]} ${filetypes.unique().size() > 1 ? 'multiple' : filetypes[0]} ${kinds.join(',')}" > reads.faster-report.html
     """
 }
 
@@ -552,7 +561,11 @@ workflow {
             .mix(ch_ont_raw.collect().map { ['ont', it, 'fastq'] })          // HiFi / ONT are optional with --assembly
         if (params.cifi)
             ch_qc = ch_qc.mix(ch_fq.filter { k, _f -> k == 'cifi' }.map { _k, f -> f }.collect().map { ['cifi', it, readType(params.cifi)] })
-        ch_readsqc = FASTER_REPORT(ch_qc)
+        ch_readsqc = FASTER_REPORT(
+            ch_qc.flatMap { k, fs, t -> [fs].flatten().collect { [k, it, t] } }
+                 .toSortedList { a, b -> a[0] <=> b[0] ?: a[1].name <=> b[1].name }
+                 .filter { it }
+                 .map { l -> [l.collect { it[0] }, l.collect { it[1] }, l.collect { it[2] }] })
     }
 
     // ---------------------------------------------------------------- CiFi

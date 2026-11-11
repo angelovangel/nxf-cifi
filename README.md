@@ -12,7 +12,7 @@ with --cifi    : reads QC -> pbmarkdup (PCR duplicates) -> cifi qc -> cifi diges
                  -> evaluation of contigs and scaffolds
 evaluation     : N50 / contigs / gaps, telomeres (TTTAGGG)n, compleasm (BUSCO genes), merqury (QV, completeness)
 dot plots      : minimap2 hap2 vs hap1 (contigs and scaffolds); with --ref every assembly vs the reference
-reads QC       : faster-report (github.com/angelovangel/faster-report) for all input reads: HiFi, ONT and CiFi
+reads QC       : faster-report (github.com/angelovangel/faster-report), one report for all input reads (HiFi, ONT, CiFi)
 report         : report/report.html, a single self-contained page with all of the above
 ```
 
@@ -80,12 +80,12 @@ Run `nextflow run nxf-cifi --help` for all options (`--help <param>` for one, `-
 Options are defined in `nextflow_schema.json` and checked at start by the nf-schema plugin (Nextflow ≥ 25.04);
 `--monochrome_logs` turns colours off. The defaults match `run_hifiasm.sh`.
 
-## Output (same layout as run_hifiasm.sh)
+## Output
 
 ```
 report/report.html                tables, Nx + metric plots, CiFi contact analysis, dot plots, k-mer spectra, contact maps, links
 summary.tsv                       per assembly: contiguity, telomeres, BUSCO, QV, k-mer completeness
-reads/                            hifi/ont/cifi.faster-report.html (+ merged CiFi BAM)
+reads/                            reads.faster-report.html: one report for all reads (+ merged CiFi BAM)
 cifi/qc  cifi/digest              cifi qc report, digest report, segments, R1/R2
 cifi/markdup                      pbmarkdup duplicate summary (<prefix>.cifi.markdup.tsv) + log
 cifi/contacts                     cifi contacts report + stats per haplotype
