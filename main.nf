@@ -4,9 +4,9 @@
  * (PacBio long-read Hi-C) for phasing and chromosome-scale scaffolding, followed by evaluation.
  * Nextflow port of run_hifiasm.sh; every process runs in a container (docker by default).
  *
- * Without --cifi : reads QC -> hifiasm --ul -> contigs (primary, hap1, hap2) -> evaluation
+ * Without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
  * With --cifi    : reads QC -> cifi qc -> cifi digest (segments + Hi-C-like R1/R2)
- *                  -> hifiasm --ul --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
+ *                  -> hifiasm [--ul] --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
  *                  -> per haplotype: minimap2 map-hifi (segments) -> cifi contacts -> yahs scaffolds
  *                     -> Juicebox files (juicer pre -a [+ juicer_tools .hic]) -> PretextMap contact map
  *                  -> CiFi contact analysis per haplotype (MAPQ, segments/read, cis/trans, P(s), coverage)
@@ -186,7 +186,8 @@ process HIFIASM {
     def hicFiles = [hic].flatten()
     def args = ["-o ${params.prefix}", "-t ${task.cpus}", "--n-hap ${params.ploidy}", "--telo-m ${params.telo_motif_r}"]
     if (params.purge != null) args << "-l ${params.purge}"
-    args << "--ul ${[ont].flatten().join(',')}"
+    def ontFiles = [ont].flatten()
+    if (ontFiles) args << "--ul ${ontFiles.join(',')}"     // ONT ultra-long reads are optional
     if (hicFiles) args << "--dual-scaf --h1 ${hicFiles[0]} --h2 ${hicFiles[1]}"
     if (params.hifiasm_args) args << params.hifiasm_args
     """
@@ -540,7 +541,7 @@ workflow {
     if (params.assembly) {
         if (!params.cifi) error "--assembly needs --cifi (CiFi scaffolding of an existing assembly); see --help"
         if (asmFiles.size() > 2) error "--assembly takes one or two FASTAs (hap1[,hap2]), got ${asmFiles.size()}"
-    } else if (!params.hifi || !params.ont) error "--hifi and --ont are required (or --assembly + --cifi); see --help"
+    } else if (!params.hifi) error "--hifi is required (or --assembly + --cifi); see --help"
     // name of the assembly set: hifiasm bp (no CiFi) / hic (CiFi phasing) or asm (--assembly)
     def mode = params.assembly ? 'asm' : params.cifi ? 'hic' : 'bp'
 
@@ -552,7 +553,8 @@ workflow {
     ch_fq = BAM2FASTQ(ch_conv.bam).mix(ch_conv.other)
     ch_hifi = ch_fq.filter { k, _f -> k == 'hifi' }.map { _k, f -> f }.collect()
     ch_ont_raw = params.ont ? readFiles(params.ont) : Channel.empty()
-    ch_ont = (params.ont_minlen as int > 0 ? ONT_FILTER(ch_ont_raw) : ch_ont_raw).collect()
+    // no --ont: [] so that HIFIASM still runs (collect() of an empty channel emits nothing)
+    ch_ont = params.ont ? (params.ont_minlen as int > 0 ? ONT_FILTER(ch_ont_raw) : ch_ont_raw).collect() : Channel.value([])
 
     // reads QC of all starting reads: HiFi, ONT and CiFi (raw, before any filter)
     ch_readsqc = Channel.empty()

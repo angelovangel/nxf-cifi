@@ -1,11 +1,11 @@
 # nxf-cifi
 
-Genome assembly with hifiasm from HiFi and ONT ultra-long reads. With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
+Genome assembly with hifiasm from HiFi reads, optionally with ONT ultra-long reads (`--ont`, passed as `--ul`). With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
 
 ```
-without --cifi : reads QC -> hifiasm --ul -> contigs (primary, hap1, hap2) -> evaluation
+without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
 with --cifi    : reads QC -> pbmarkdup (PCR duplicates) -> cifi qc -> cifi digest (segments + Hi-C-like R1/R2)
-                 -> hifiasm --ul --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
+                 -> hifiasm [--ul] --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
                  -> per haplotype: minimap2 map-hifi -> cifi contacts -> yahs scaffolds
                     -> Juicebox files (juicer pre -a [+ juicer_tools .hic]) -> PretextMap + PretextSnapshot
                     -> CiFi contact analysis (MAPQ, segments/read, cis/trans, distance decay P(s), coverage)
@@ -19,6 +19,9 @@ report         : report/report.html, a single self-contained page with all of th
 ## Run
 
 ```bash
+# HiFi only
+nextflow run nxf-cifi --hifi hifi.bam --prefix myplant --outdir asm_hifi
+
 # HiFi + ONT UL
 nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --prefix myplant --outdir asm_noCiFi
 

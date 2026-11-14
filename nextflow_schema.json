@@ -9,7 +9,7 @@
             "title": "Reads",
             "type": "object",
             "fa_icon": "fas fa-terminal",
-            "description": "Reads for assembly from scratch (--hifi and --ont), or an existing assembly with --assembly + --cifi.",
+            "description": "Reads for assembly from scratch (--hifi, optionally --ont), or an existing assembly with --assembly + --cifi.",
             "properties": {
                 "hifi": {
                     "type": "string",
@@ -18,7 +18,7 @@
                 },
                 "ont": {
                     "type": "string",
-                    "description": "ONT ultra-long reads: .fastq(.gz); comma-separated or glob",
+                    "description": "ONT ultra-long reads (optional, hifiasm --ul): .fastq(.gz); comma-separated or glob",
                     "fa_icon": "fas fa-file"
                 },
                 "ont_minlen": {
