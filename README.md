@@ -5,7 +5,7 @@ Genome assembly with hifiasm from HiFi reads, optionally with ONT ultra-long rea
 ```
 without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
 with --cifi    : reads QC -> pbmarkdup (PCR duplicates) -> cifi qc -> cifi digest (segments + Hi-C-like R1/R2)
-                 -> hifiasm [--ul] --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
+                 -> hifiasm [--ul] --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
                  -> per haplotype: minimap2 map-hifi -> cifi contacts -> yahs scaffolds
                     -> Juicebox files (juicer pre -a [+ juicer_tools .hic]) -> PretextMap + PretextSnapshot
                     -> CiFi contact analysis (MAPQ, segments/read, cis/trans, distance decay P(s), coverage)
@@ -74,7 +74,7 @@ nextflow run nxf-cifi --assembly asm_noCiFi/fasta/myplant.bp.hap1.p_ctg.fa,asm_n
   dot plots and `compare_assemblies.sh` work as for a hifiasm run (`-d CiFiScaf=asm_CiFiScaf`).
 - `--cifi` is required. `--hifi` or `--meryl_db` turns on merqury QV; without either, merqury is skipped.
   `--ont` is optional (reads QC only).
-- The CiFi reads are used for scaffolding only. Phasing with CiFi (`hifiasm --dual-scaf`) needs a full run from reads.
+- The CiFi reads are used for scaffolding only. Phasing with CiFi (`hifiasm --h1/--h2`) needs a full run from reads.
 
 Inputs can be comma-separated lists or quoted globs (`--hifi 'reads/*.bam'`).
 Set `--max_cpus` / `--max_memory` to the machine size; hifiasm gets the full amount and the other steps are capped at it.

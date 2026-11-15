@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Side-by-side comparison of nxf-cifi runs, e.g. HiFi+ONT (no CiFi) vs HiFi+ONT+CiFi
-# (--dual-scaf) vs YaHS scaffolds. Needs only bash + python3: it collects the results the
+# (hifiasm --h1/--h2 phasing) vs YaHS scaffolds. Needs only bash + python3: it collects the results the
 # pipeline already computed and runs no assembly or evaluation tools.
 #
 # Per assembly (from <run>/eval/...)

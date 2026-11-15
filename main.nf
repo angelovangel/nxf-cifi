@@ -6,7 +6,7 @@
  *
  * Without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
  * With --cifi    : reads QC -> cifi qc -> cifi digest (segments + Hi-C-like R1/R2)
- *                  -> hifiasm [--ul] --dual-scaf --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
+ *                  -> hifiasm [--ul] --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
  *                  -> per haplotype: minimap2 map-hifi (segments) -> cifi contacts -> yahs scaffolds
  *                     -> Juicebox files (juicer pre -a [+ juicer_tools .hic]) -> PretextMap contact map
  *                  -> CiFi contact analysis per haplotype (MAPQ, segments/read, cis/trans, P(s), coverage)
@@ -188,7 +188,7 @@ process HIFIASM {
     if (params.purge != null) args << "-l ${params.purge}"
     def ontFiles = [ont].flatten()
     if (ontFiles) args << "--ul ${ontFiles.join(',')}"     // ONT ultra-long reads are optional
-    if (hicFiles) args << "--dual-scaf --h1 ${hicFiles[0]} --h2 ${hicFiles[1]}"
+    if (hicFiles) args << "--h1 ${hicFiles[0]} --h2 ${hicFiles[1]}"
     if (params.hifiasm_args) args << params.hifiasm_args
     """
     hifiasm --version > hifiasm.version
