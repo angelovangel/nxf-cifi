@@ -64,7 +64,7 @@ process ONT_FILTER {
 // 'multiple' when mixed, run info (date, flow cell, basecaller) only for a single platform
 process FASTER_REPORT {
     label 'mid'
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/reads", mode: params.publish_mode
     input:  tuple val(kinds), path(files, stageAs: 'in/?/*'), val(filetypes)
     output: path "reads.faster-report.html"
@@ -341,7 +341,7 @@ process CIFI_STATS {
 process JUICER_TOOLS {
     tag "$name"
     label 'big'
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/scaffolds/${name}", mode: params.publish_mode
     input:
         tuple val(name), path(txt), path(sizes)
@@ -358,7 +358,7 @@ process JUICER_TOOLS {
 process PRETEXTMAP {
     tag "$name"
     label 'mid'
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/scaffolds/${name}", mode: params.publish_mode
     input:  tuple val(name), path(pairs)
     output: tuple val(name), path("${name}.scaffolds.pretext")
@@ -371,7 +371,7 @@ process PRETEXTMAP {
 
 process PRETEXTSNAPSHOT {
     tag "$name"
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/scaffolds/${name}", mode: params.publish_mode
     input:  tuple val(name), path(pretext)
     output: path '*.png'
@@ -407,7 +407,7 @@ process COMPLEASM_DOWNLOAD {
 process COMPLEASM {
     tag "$name"
     label 'big'
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/eval/compleasm", mode: params.publish_mode
     input:
         tuple val(name), path(fa)
@@ -443,7 +443,7 @@ process MERYL_COUNT {
 process MERQURY {
     tag "$set"
     label 'big'
-    errorStrategy 'ignore'
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/eval/merqury", mode: params.publish_mode, saveAs: { it.endsWith('.meryl') ? null : it }
     input:
         tuple val(set), path(fas)
@@ -466,10 +466,7 @@ process MERQURY {
 process DOTPLOT_ALIGN {
     tag "$name"
     label 'big'
-    // whole-haplotype alignments of large genomes can exceed 64 GB: retry with more memory
-    // (see nextflow.config, capped at --max_memory), then skip the dot plot instead of aborting the run
-    errorStrategy { task.exitStatus in 137..140 && task.attempt < 3 ? 'retry' : 'ignore' }
-    maxRetries    2
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/dotplots", mode: params.publish_mode, pattern: '*.paf.gz'
     input:  tuple val(name), val(qlabel), path(qfa, stageAs: 'q/*'), val(tlabel), path(tfa, stageAs: 't/*')
     output: tuple val(name), val(qlabel), val(tlabel), path("${name}.paf.gz"), path('q.len'), path('t.len')
