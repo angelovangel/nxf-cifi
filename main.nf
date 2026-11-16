@@ -683,7 +683,8 @@ workflow {
         ASM_STATS.out.stats.mix(ch_gaps).collect(),
         ch_telo.collect(),
         ch_busco.collect().ifEmpty([]),
-        ch_merq_files.flatten().collect().ifEmpty([]),
+        // only per-set files (haps.*, primary.*): every set also writes the same-named <db>.hist
+        ch_merq_files.flatten().filter { f -> f.name ==~ /^(haps|primary)\..*/ }.collect().ifEmpty([]),
         ch_dot.flatten().collect().ifEmpty([]),
         ch_contact.flatten().collect().ifEmpty([]),
         ch_readsqc.collect().ifEmpty([]),
