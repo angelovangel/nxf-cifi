@@ -506,7 +506,7 @@ process SUMMARY {
     script:
     """
     summarize_run.py
-    column -t summary.tsv
+    cat summary.tsv   # log only; `column` is not in the container
     """
 }
 
