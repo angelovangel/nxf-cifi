@@ -466,6 +466,10 @@ process MERQURY {
 process DOTPLOT_ALIGN {
     tag "$name"
     label 'big'
+    // whole-haplotype alignments of large genomes can exceed 64 GB: retry with more memory
+    // (see nextflow.config, capped at --max_memory), then skip the dot plot instead of aborting the run
+    errorStrategy { task.exitStatus in 137..140 && task.attempt < 3 ? 'retry' : 'ignore' }
+    maxRetries    2
     publishDir "${params.outdir}/dotplots", mode: params.publish_mode, pattern: '*.paf.gz'
     input:  tuple val(name), val(qlabel), path(qfa, stageAs: 'q/*'), val(tlabel), path(tfa, stageAs: 't/*')
     output: tuple val(name), val(qlabel), val(tlabel), path("${name}.paf.gz"), path('q.len'), path('t.len')
