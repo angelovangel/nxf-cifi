@@ -393,16 +393,28 @@ COLS = [("Assembly", lambda r: r[0], None, None),
         ("QV", lambda r: r[col["QV"]], lambda r: num(r[col["QV"]]), max),
         ("k-mer compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
 
+RUN_ORDER = [sp.split("=", 2)[1] for sp in specs]       # -d / -a labels, in command-line order
+def run_of(text):
+    """run of a row label: the run itself, <run>_hap1, <run>Scaf_hap2, ... (longest matching run label)"""
+    hits = [r for r in RUN_ORDER if text == r or text.startswith(r + "_") or text.startswith(r + "Scaf_")]
+    return RUN_ORDER.index(max(hits, key=len)) if hits else None
+
 def table(head, body, numeric_from=1):
-    """body: rows of (text, css class, sort value or None); click a header to sort"""
+    """body: rows of (text, css class, sort value or None); click a header to sort.
+    Rows from several runs (first column = run or assembly label) are banded per run and separated."""
     h = "".join(f'<th class="{"num" if i >= numeric_from else ""}">{esc(c)}</th>' for i, c in enumerate(head))
     def td(i, cell):
         text, cls, v = (list(cell) + ["", None])[:3]
         cls = ("num " if i >= numeric_from else "") + cls
         dv = "" if i < numeric_from else f' data-v="{"" if v is None else v}"'
         return f'<td class="{cls.strip()}"{dv}>{esc(str(text))}</td>'
-    b = "".join("<tr>" + "".join(td(i, c) for i, c in enumerate(r)) + "</tr>" for r in body)
-    return f'<div class="scroll"><table class="sortable"><thead><tr>{h}</tr></thead><tbody>{b}</tbody></table></div>'
+    runs = [run_of(str((list(r[0]) + [""])[0])) for r in body]
+    banded = len({x for x in runs if x is not None}) > 1
+    def tr(r, run):
+        a = f' data-run="{run}"' + (' class="rb"' if run % 2 else "") if banded and run is not None else ""
+        return f"<tr{a}>" + "".join(td(i, c) for i, c in enumerate(r)) + "</tr>"
+    b = "".join(tr(r, run) for r, run in zip(body, runs))
+    return f'<div class="scroll"><table class="sortable{" runs" if banded else ""}"><thead><tr>{h}</tr></thead><tbody>{b}</tbody></table></div>'
 
 best = {}
 for name, _, key, better in COLS:
@@ -685,7 +697,7 @@ CMD_HTML = ('<details class="cmd"><summary>Command used</summary>'
             + "".join(f'<p class="note">{esc(t)}</p><pre>{esc(c)}</pre>' for t, c in cmds) + "</details>")
 
 CSS = r"""
-:root { --bg:#f7f7f5; --fg:#1d1f21; --muted:#676c73; --line:#e1e2de; --card:#ffffff; --accent:#1f5fa8; --best:#e3edf9; --worse:#fbe5e1; --hover:#f1f4f8; }
+:root { --bg:#f7f7f5; --fg:#1d1f21; --muted:#676c73; --line:#e1e2de; --card:#ffffff; --accent:#1f5fa8; --best:#e3edf9; --worse:#fbe5e1; --hover:#f1f4f8; --band:#ecede8; --runsep:#9ea3a9; }
 * { box-sizing:border-box }
 html { color-scheme: light }
 body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif }
@@ -717,6 +729,8 @@ td.best { font-weight:700; background:var(--best) }
 td.worse { font-weight:700; background:var(--worse) }
 tbody tr:hover td { background:var(--hover) } tbody tr:hover td.best { background:var(--best) }
 tbody tr:last-child td { border-bottom:none }
+table.runs tbody tr.rb td:not(.best):not(.worse):not(.low) { background:var(--band) }   /* every other run */
+table.runs tbody tr.rsep td { border-top:2px solid var(--runsep) }                          /* run changes */
 figure { margin:0 0 18px; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px }
 figure img { width:100%; height:auto; display:block }
 figcaption { padding-top:6px }
@@ -799,6 +813,9 @@ const short = v => Number.isInteger(v) ? v.toLocaleString() : Math.abs(v) >= 100
 const dash = h => h === 'hap2' ? '5 3' : h === 'primary' ? '1.5 2.5' : '';
 
 /* ---------------------------------------------------------------- sortable tables */
+const runSeps = t => { let prev = null;
+  [...t.tBodies[0].rows].forEach((r, i) => { r.classList.toggle('rsep', i > 0 && r.dataset.run !== prev); prev = r.dataset.run; }); };
+document.querySelectorAll('table.runs').forEach(runSeps);
 document.querySelectorAll('table.sortable').forEach(t => {
   const ths = [...t.tHead.rows[0].cells];
   ths.forEach((th, i) => th.addEventListener('click', () => {
@@ -813,6 +830,7 @@ document.querySelectorAll('table.sortable').forEach(t => {
       const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, {numeric: true});
       return asc ? c : -c;
     }).forEach(r => tb.appendChild(r));
+    if (t.classList.contains('runs')) runSeps(t);
   }));
 });
 
