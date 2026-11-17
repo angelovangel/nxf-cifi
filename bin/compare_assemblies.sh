@@ -588,7 +588,7 @@ for run in RUNS:
     dots.append("".join(sec))
 if dots:
     parts.append('<section id="dotplots"><h2>Dot plots</h2><p class="note">Hover to highlight the target and query sequences '
-                 'under the cursor (on an alignment: also its coordinates); drag to zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
+                 'under the cursor; near an alignment, all alignments of that query–target pair and a summary of them; drag to zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
                  'target and flipped (−) where most of them align reversed.</p>' + "".join(dots) + "</section>")
 
 # CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
@@ -1000,9 +1000,10 @@ function dotplot(host, d) {
       for (const s of S) if (s.fwd === fwd) { c.moveTo(X(s.x0), Y(s.y0)); c.lineTo(X(s.x1), Y(s.y1)); }
       c.stroke();
     }
-    if (hover) {
+    if (hover) {                                       // all alignments of the hovered query-target pair
       c.strokeStyle = 'rgba(240,160,30,.9)'; c.lineWidth = 5; c.beginPath();
-      c.moveTo(X(hover.x0), Y(hover.y0)); c.lineTo(X(hover.x1), Y(hover.y1)); c.stroke();
+      for (const s of S) if (s.s[0] === hover.s[0] && s.s[1] === hover.s[1]) { c.moveTo(X(s.x0), Y(s.y0)); c.lineTo(X(s.x1), Y(s.y1)); }
+      c.stroke();
     }
     c.restore();
     c.strokeStyle = '#b9bdc2'; c.lineWidth = 1; c.strokeRect(ML + .5, MT + .5, pw(), ph());
@@ -1064,9 +1065,18 @@ function dotplot(host, d) {
     const nt = h ? T[h.s[0]] : find(T, iX(px)), nq = h ? Q[h.s[1]] : find(Q, iY(py));
     if (h !== hover || !hl || hl.t !== nt || hl.q !== nq) { hover = h; hl = {t: nt, q: nq}; draw(); }
     if (h) {
-      const [ti, qi, ts, te, qs, qe, plus] = h.s, t = T[ti], q = Q[qi];
-      showTip(`<b>${escH(q[0])}</b> ${fint(qs)}–${fint(qe)}<br><b>${escH(t[0])}</b> ${fint(ts)}–${fint(te)}<br>` +
-              `${flen(qe - qs)} · strand ${plus ? '+' : '−'} · <span style="color:${h.fwd ? '#1f5fa8' : '#c8413b'}">${h.fwd ? 'collinear' : 'inverted'}</span>`, ev);
+      // summary of the query-target pair: single alignments are split at the 10 Mb mapping chunks
+      const ti = h.s[0], qi = h.s[1], t = T[ti], q = Q[qi];
+      let n = 0, bp = 0, inv = 0, q0 = Infinity, q1 = 0, t0 = Infinity, t1 = 0;
+      for (const s of S) if (s.s[0] === ti && s.s[1] === qi) {
+        const [, , ts, te, qs, qe] = s.s, L = qe - qs;
+        n++; bp += L; if (!s.fwd) inv += L;
+        q0 = Math.min(q0, qs); q1 = Math.max(q1, qe); t0 = Math.min(t0, ts); t1 = Math.max(t1, te);
+      }
+      showTip(`<b>${escH(q[0])}</b>${q[3] ? ' (−)' : ''} ${flen(q0)}–${flen(q1)} of ${flen(q[2])}<br>` +
+              `<b>${escH(t[0])}</b> ${flen(t0)}–${flen(t1)} of ${flen(t[2])}<br>` +
+              `${flen(bp)} aligned (${fmt(100 * bp / q[2], 1)}% of query) · ${n} alignment${n > 1 ? 's' : ''}<br>` +
+              `<span style="color:#1f5fa8">collinear ${flen(bp - inv)}</span> · <span style="color:#c8413b">inverted ${flen(inv)}</span>`, ev);
     } else {
       const x = iX(px), y = iY(py), t = find(T, x), q = find(Q, y);
       const qp = q[3] ? q[2] - (y - q[1]) : y - q[1];
