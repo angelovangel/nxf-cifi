@@ -587,8 +587,8 @@ for run in RUNS:
     sec.append('<div class="grid dpgrid">' + "".join(figs) + "</div>")
     dots.append("".join(sec))
 if dots:
-    parts.append('<section id="dotplots"><h2>Dot plots</h2><p class="note">Hover an alignment for coordinates; drag to '
-                 'zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
+    parts.append('<section id="dotplots"><h2>Dot plots</h2><p class="note">Hover to highlight the target and query sequences '
+                 'under the cursor (on an alignment: also its coordinates); drag to zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
                  'target and flipped (−) where most of them align reversed.</p>' + "".join(dots) + "</section>")
 
 # CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
@@ -974,6 +974,7 @@ function dotplot(host, d) {
   host.append(cv, sel, btn);
   const ML = 62, MR = 96, MT = 76, MB = 44;
   let full = {x0: 0, x1: tTot, y0: 0, y1: qTot}, view = {...full}, size = 0, dpr = 1, hover = null, drag = null;
+  let hl = null;                                     // {t, q}: target / query sequence under the cursor
   const pw = () => size - ML - MR, ph = () => size - MT - MB;
   const X = x => ML + (x - view.x0) / (view.x1 - view.x0) * pw(), Y = y => MT + ph() - (y - view.y0) / (view.y1 - view.y0) * ph();
   const iX = px => view.x0 + (px - ML) / pw() * (view.x1 - view.x0), iY = py => view.y0 + (MT + ph() - py) / ph() * (view.y1 - view.y0);
@@ -984,6 +985,11 @@ function dotplot(host, d) {
     c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, size, size);
     c.fillStyle = '#fff'; c.fillRect(0, 0, size, size);
     c.save(); c.beginPath(); c.rect(ML, MT, pw(), ph()); c.clip();
+    if (hl) {                                          // highlight the sequences under the cursor
+      c.fillStyle = 'rgba(240,160,30,.13)';
+      c.fillRect(X(hl.t[1]), MT, X(hl.t[1] + hl.t[2]) - X(hl.t[1]), ph());
+      c.fillRect(ML, Y(hl.q[1] + hl.q[2]), pw(), Y(hl.q[1]) - Y(hl.q[1] + hl.q[2]));
+    }
     c.strokeStyle = '#e6e8eb'; c.lineWidth = 1; c.beginPath();
     T.forEach(t => { const x = Math.round(X(t[1])) + .5; c.moveTo(x, MT); c.lineTo(x, MT + ph()); });
     Q.forEach(q => { const y = Math.round(Y(q[1])) + .5; c.moveTo(ML, y); c.lineTo(ML + pw(), y); });
@@ -1012,13 +1018,18 @@ function dotplot(host, d) {
     c.font = '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = '#4a4f56';
     T.forEach(t => {
       const a = Math.max(X(t[1]), ML), b = Math.min(X(t[1] + t[2]), ML + pw());
-      if (b - a < 11) return;
-      c.save(); c.translate((a + b) / 2 + 3, MT - 5); c.rotate(-Math.PI / 2); c.textAlign = 'left'; c.fillText(trunc(t[0], 12), 0, 0); c.restore();
+      if (b - a < 11 && !(hl && hl.t === t)) return;
+      const on = hl && hl.t === t;
+      c.save(); c.translate((a + b) / 2 + 3, MT - 5); c.rotate(-Math.PI / 2); c.textAlign = 'left';
+      c.font = (on ? 'bold ' : '') + '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = on ? '#9a5a00' : '#4a4f56';
+      c.fillText(trunc(t[0], 12), 0, 0); c.restore();
     });
     c.textAlign = 'left';
     Q.forEach(q => {
       const a = Math.min(Y(q[1]), MT + ph()), b = Math.max(Y(q[1] + q[2]), MT);
-      if (a - b < 11) return;
+      if (a - b < 11 && !(hl && hl.q === q)) return;
+      const on = hl && hl.q === q;
+      c.font = (on ? 'bold ' : '') + '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = on ? '#9a5a00' : '#4a4f56';
       c.fillText(trunc(q[0], 13) + (q[3] ? ' (−)' : ''), ML + pw() + 5, (a + b) / 2 + 3);
     });
   }
@@ -1048,9 +1059,10 @@ function dotplot(host, d) {
       Object.assign(sel.style, {display: 'block', left: x + 'px', top: y + 'px', width: Math.abs(px - drag[0]) + 'px', height: Math.abs(py - drag[1]) + 'px'});
       hideTip(); return;
     }
-    if (!inside(px, py)) { if (hover) { hover = null; draw(); } hideTip(); return; }
+    if (!inside(px, py)) { if (hover || hl) { hover = hl = null; draw(); } hideTip(); return; }
     const h = nearest(px, py);
-    if (h !== hover) { hover = h; draw(); }
+    const nt = h ? T[h.s[0]] : find(T, iX(px)), nq = h ? Q[h.s[1]] : find(Q, iY(py));
+    if (h !== hover || !hl || hl.t !== nt || hl.q !== nq) { hover = h; hl = {t: nt, q: nq}; draw(); }
     if (h) {
       const [ti, qi, ts, te, qs, qe, plus] = h.s, t = T[ti], q = Q[qi];
       showTip(`<b>${escH(q[0])}</b> ${fint(qs)}–${fint(qe)}<br><b>${escH(t[0])}</b> ${fint(ts)}–${fint(te)}<br>` +
@@ -1061,7 +1073,7 @@ function dotplot(host, d) {
       showTip(`<span style="color:#888">${escH(d.t)}</span> ${escH(t[0])}: ${flen(x - t[1])}<br><span style="color:#888">${escH(d.q)}</span> ${escH(q[0])}${q[3] ? ' (−)' : ''}: ${flen(qp)}`, ev);
     }
   });
-  cv.addEventListener('mouseleave', () => { hideTip(); if (hover) { hover = null; draw(); } });
+  cv.addEventListener('mouseleave', () => { hideTip(); if (hover || hl) { hover = hl = null; draw(); } });
   cv.addEventListener('mousedown', ev => { const p = pos(ev); if (inside(...p)) { drag = p; ev.preventDefault(); } });
   window.addEventListener('mouseup', ev => {
     if (!drag) return;
@@ -1069,7 +1081,7 @@ function dotplot(host, d) {
     if (Math.abs(px - qx) < 6 || Math.abs(py - qy) < 6) return;
     const cx = v => Math.min(ML + pw(), Math.max(ML, v)), cy = v => Math.min(MT + ph(), Math.max(MT, v));
     view = {x0: iX(cx(Math.min(px, qx))), x1: iX(cx(Math.max(px, qx))), y0: iY(cy(Math.max(py, qy))), y1: iY(cy(Math.min(py, qy)))};
-    btn.style.display = 'block'; hover = null; draw();
+    btn.style.display = 'block'; hover = hl = null; draw();
   });
   const reset = () => { view = {...full}; btn.style.display = 'none'; draw(); };
   cv.addEventListener('dblclick', reset); btn.addEventListener('click', reset);
