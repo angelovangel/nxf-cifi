@@ -347,9 +347,27 @@ def intf(v):
     return "NA" if x is None else f"{x:,.0f}"
 
 PALETTE = ["#2f6fb3", "#e07b24", "#2e9a52", "#c8413b", "#7d5bb5", "#8a5a44", "#d0619f", "#6f747b", "#a7a426", "#1fa3b5"]
+RUN_ORDER = [sp.split("=", 2)[1] for sp in specs]       # -d / -a labels, in command-line order
+def run_of(text):
+    """run of a row label: the run itself, <run>_hap1, <run>Scaf_hap2, ... (longest matching run label)"""
+    hits = [r for r in RUN_ORDER if text == r or text.startswith(r + "_") or text.startswith(r + "Scaf_")]
+    return RUN_ORDER.index(max(hits, key=len)) if hits else None
+
 grp = lambda l: re.sub(r"_(hap[12]|primary)$", "", l)
 groups = list(dict.fromkeys(grp(r[0]) for r in rows))
-gcol = {g: PALETTE[i % len(PALETTE)] for i, g in enumerate(groups)}
+def shade(hex_, f):
+    """mix a colour with black (f > 0, darker) or white (f < 0, lighter)"""
+    c = [int(hex_[i:i + 2], 16) for i in (1, 3, 5)]
+    c = [round(v * (1 - f)) if f > 0 else round(v + (255 - v) * -f) for v in c]
+    return "#" + "".join(f"{v:02x}" for v in c)
+runs_in_rows = {run_of(r[0]) for r in rows}
+if len(runs_in_rows) > 1:
+    # several runs: one hue per run (as in the CiFi charts); scaffolds a darker shade of their run's contigs.
+    # hap2 / primary stay lighter bars and dashed / dotted lines.
+    gcol = {g: shade(PALETTE[(run_of(g + "_x") or 0) % len(PALETTE)], 0.38 if g.endswith("Scaf") else 0) for g in groups}
+else:
+    # one run: contigs vs scaffolds (vs primary) are the groups that matter, one colour each
+    gcol = {g: PALETTE[i % len(PALETTE)] for i, g in enumerate(groups)}
 
 def nx_points(ls):
     """[x_start %, length, rank] steps of the Nx curve, thinned for long tails"""
@@ -393,12 +411,6 @@ COLS = [("Assembly", lambda r: r[0], None, None),
         ("QV", lambda r: r[col["QV"]], lambda r: num(r[col["QV"]]), max),
         ("k-mer compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
 
-RUN_ORDER = [sp.split("=", 2)[1] for sp in specs]       # -d / -a labels, in command-line order
-def run_of(text):
-    """run of a row label: the run itself, <run>_hap1, <run>Scaf_hap2, ... (longest matching run label)"""
-    hits = [r for r in RUN_ORDER if text == r or text.startswith(r + "_") or text.startswith(r + "Scaf_")]
-    return RUN_ORDER.index(max(hits, key=len)) if hits else None
-
 def table(head, body, numeric_from=1):
     """body: rows of (text, css class, sort value or None); click a header to sort.
     Rows from several runs (first column = run or assembly label) get a grey background for every other run."""
@@ -434,7 +446,9 @@ if pairs:
                        [[(p[0], ""), (p[1], "", num(p[1])), (p[2], "", num(p[2]))] for p in pairs]))
 parts.append("</section>")
 parts.append('<section id="plots"><h2>Comparison plots</h2>'
-             '<p class="note">Hover a bar for details; the same assembly is highlighted in every panel.</p>'
+             '<p class="note">Hover a bar for details; the same assembly is highlighted in every panel.'
+             + (' Colour = run; darker shade = its YaHS scaffolds.' if len(runs_in_rows) > 1 else '')
+             + '</p>'
              '<div id="bars" class="bars"></div>'
              '<h3>Nx curves</h3><p class="note">Hover to read Nx of every assembly at that point; click a legend entry to '
              'hide or show it. Solid hap1, dashed hap2, dotted primary.</p><div id="nx" class="nx"></div></section>')
@@ -452,9 +466,8 @@ for run in RUNS:
         d["label"], d["hap"], d["png"] = lab, m[1] if m else "", js.replace(".cifi_stats.json", ".cifi_stats.png")
         run["cifi_data"].append(d)
         DATA["cifi"].append({k: d[k] for k in ("label", "hap", "ps", "cardinality", "summary")})
-cgroups = list(dict.fromkeys(re.sub(r"_hap[12]$", "", d["label"]) for d in DATA["cifi"]))
-for d in DATA["cifi"]:
-    d["color"] = PALETTE[cgroups.index(re.sub(r"_hap[12]$", "", d["label"])) % len(PALETTE)]
+for d in DATA["cifi"]:      # same hue per run as the assembly plots
+    d["color"] = PALETTE[(run_of(d["label"]) or 0) % len(PALETTE)]
 CIFI_COLS = [("Haplotype", "label", None), ("CiFi reads", "cifi_reads", "int"), ("Segments", "segments", "int"),
              ("% MAPQ ≥ 1", "pct_segments_mapq_ge1", "pct"), ("% MAPQ ≥ 30", "pct_segments_mapq_ge30", "pct"),
              ("Median usable seg./read", "median_usable_segments", "int"), ("% multi-way reads", "pct_multiway_reads", "pct"),
@@ -877,7 +890,7 @@ function bars() {
       el('text', {x: lw - 6, y: y + rh / 2 + 4, 'text-anchor': 'end', class: 'lab'}, g).textContent = r.label;
       if (v != null) {
         el('rect', {x: lw, y: y + 3, width: Math.max(sx(v) - lw, 1), height: rh - 6, rx: 2, fill: r.color,
-                    'fill-opacity': r.hap === 'hap2' ? 0.62 : r.hap === 'primary' ? 0.4 : 0.95}, g);
+                    'fill-opacity': r.hap === 'primary' ? 0.4 : 0.95}, g);
         el('text', {x: sx(v) + 4, y: y + rh / 2 + 4, class: 'val'}, g).textContent = short(v);
       } else el('text', {x: lw + 4, y: y + rh / 2 + 4, class: 'na'}, g).textContent = 'NA';
       g.addEventListener('mousemove', ev => { hl(i); showTip(`${sw(r.color)}<b>${escH(r.label)}</b><br>${v == null ? 'not computed for this assembly' : m.tip(r)}`, ev); });
