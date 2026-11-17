@@ -471,12 +471,7 @@ process DOTPLOT_ALIGN {
     input:  tuple val(name), val(qlabel), path(qfa, stageAs: 'q/*'), val(tlabel), path(tfa, stageAs: 't/*')
     output: tuple val(name), val(qlabel), val(tlabel), path("${name}.paf.gz"), path('q.len'), path('t.len')
     script:
-    """
-    minimap2 -x ${params.dotplot_preset} -t ${task.cpus} --secondary=no $tfa $qfa 2> minimap2.log | gzip -c > ${name}.paf.gz
-    for x in q t; do
-        zcat -f \$x/* | awk '/^>/{if(n!="")print n"\\t"l; n=substr(\$1,2); l=0; next}{l+=length(\$0)} END{if(n!="")print n"\\t"l}' > \$x.len
-    done
-    """
+    "dotplot_align.sh $name $qfa $tfa ${params.dotplot_preset} ${task.cpus} 10000000"
     stub:
     """
     echo "" | gzip -c > ${name}.paf.gz; printf "ctg1\\t8\\n" > q.len; cp q.len t.len

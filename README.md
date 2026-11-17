@@ -50,6 +50,7 @@ Not included from the paper: TAD calling (TopDom) and Hi-C correlation, which ne
 
 Add `--ref ref.fa` to dot plot every assembly against a reference. `--dotplot_min_aln` (10 kb) and
 `--dotplot_min_seq` (500 kb) drop short alignments and sequences from the plots; `--skip_dotplot` turns them off.
+Query sequences are mapped in 10 Mb pieces and lifted back, so chromosome-scale contigs do not break minimap2.
 
 Add `--map_ont` to map the ONT reads to hap1 and hap2 (the scaffolds with `--cifi`, the contigs otherwise) with minimap2
 `-x lr:hq` (Q20+ ONT reads). `ont_mapping/` gets a sorted BAM with a
