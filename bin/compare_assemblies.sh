@@ -16,8 +16,9 @@
 # Plots (python3 + matplotlib; skipped with -P or if matplotlib is missing)
 #   - nx_curves.png  : scaffold and contig Nx curves of all assemblies
 #   - comparison.png : scaffold/contig N50, % bp in >= 1 Mb, T2T, BUSCO complete, QV
-# HTML report (report.html, self-contained): tables + plots above, and per run the dot plots
-#   (dotplots/), merqury spectra, CiFi contact maps (scaffolds/) and links to the reads QC reports
+# HTML report (report.html, self-contained), one section per topic (runs as subsections): assemblies,
+#   comparison plots, merqury spectra, dot plots, CiFi (library, contacts, per-haplotype contact maps +
+#   analysis), ONT coverage; reads (faster stats, coverage, QC links) first; commands used (expandable)
 #
 # Usage
 #   bash compare_assemblies.sh -d noCiFi=asm_noCiFi -d CiFi=asm_CiFi -d CiFiL0=asm_CiFi_l0 -o compare_3runs
@@ -55,6 +56,7 @@ done
 command -v python3 >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
 mkdir -p "$OUTDIR"
 
+export REPORT_CMD="$(basename "$0") $(printf '%q ' "$@")"
 python3 - "$OUTDIR" "$PRIMARY" "$TELO" "$WINDOW" "$TMIN" "$PLOTS" "$TITLE" "${SPECS[@]}" <<'PY'
 import glob, gzip, os, re, sys
 
@@ -217,6 +219,8 @@ for spec in specs:
         dp.append((png, row, js if os.path.exists(js) else None))
     RUNS.append(dict(label=label, path=os.path.abspath(path), dotplots=dp,
         reads=sorted(glob.glob(os.path.join(path, "reads", "*.html"))),
+        readstats=os.path.join(path, "reads", "reads.stats.tsv"),
+        command=os.path.join(path, "pipeline_info", "command.txt"),
         spectra=sorted(f for f in glob.glob(os.path.join(ev, "merqury", "*.png"))
                        if re.search(r"^(haps|primary)\.spectra-(cn|asm)\.fl\.png$", os.path.basename(f))),
         contact=sorted(glob.glob(os.path.join(path, "scaffolds", "**", "*.png"), recursive=True)),
@@ -456,29 +460,25 @@ for run in RUNS:
         rs = [r for r in rs if len(r) >= 5]
         tot = [r for r in rs if r[0] == "TOTAL"] or rs[-1:]
         for r in tot: MARKDUP.append([run["label"]] + r)
-if DATA["cifi"] or MARKDUP:
+CIFI_SUMMARY = ""    # cross-run part of the CiFi section; per-haplotype parts are added below
+if DATA["cifi"]:
     body = [[(d["label"], "")] + [(cfmt(d["summary"].get(k), kind), "", d["summary"].get(k)) for _, k, kind in CIFI_COLS[1:]]
             for d in DATA["cifi"]]
-    parts.append(
-        '<section id="cifi"><h2>CiFi contacts</h2>'
+    CIFI_SUMMARY = (
+        '<h3>Contacts</h3>'
         '<p class="note">CiFi segments mapped to each haplotype&#39;s contigs and lifted to the YaHS scaffolds; every pair of '
         'usable segments (MAPQ ≥ the threshold) in a read is a contact, as in <code>cifi contacts</code> and McGinty et al. '
         '(Nat Commun 2026). <b>Adjacent</b> segments are neighbours along the CiFi read (direct ligation junctions); '
         '<b>non-adjacent</b> pairs are the extra, multi-way contacts that long reads add. cis / trans count only scaffolds '
         'that are chromosome-scale; trans between two large scaffolds can also mean two pieces of one chromosome that were '
         'not joined. A P(s) slope near −1 is typical of chromatin; a flat curve suggests random ligation or a misassembly.</p>'
-        + ((table([c[0] for c in CIFI_COLS], body)) if body else "")
-        + (('<h3>PCR duplicates (pbmarkdup)</h3><p class="note">CiFi reads sequenced from the same molecule, before '
-            'digestion (the paper reports 1.8% for its GM12878 DpnII library). Rerun with <code>--cifi_rmdup</code> to '
-            'remove them.</p>' + table(["Run", "Reads", "Unique molecules", "Duplicate reads", "% duplicates"],
-              [[(m[0], ""), (f"{int(m[2]):,}", "", int(m[2])), (f"{int(m[3]):,}", "", int(m[3])),
-                (f"{int(m[4]):,}", "", int(m[4])), (m[5], "", num(m[5]))] for m in MARKDUP])) if MARKDUP else "")
-        + ('' if not DATA["cifi"] else '<h3>Contact distance decay P(s)</h3><p class="note">Contact probability per bp of distance (log–log); hover for '
+        + table([c[0] for c in CIFI_COLS], body)
+        + '<h3>Contact distance decay P(s)</h3><p class="note">Contact probability per bp of distance (log–log); hover for '
           'values, switch between all pairs and adjacent / non-adjacent pairs.</p>'
           '<div class="seg"><button data-k="all" class="on">all pairs</button><button data-k="adjacent">adjacent</button>'
           '<button data-k="non_adjacent">non-adjacent</button></div><div id="cifi-ps" class="nx"></div>'
           '<h3>Usable segments per CiFi read</h3><p class="note">Share of CiFi reads with k segments mapped at the '
-          'MAPQ threshold (k ≥ 2 give contacts, k ≥ 3 are multi-way).</p><div id="cifi-card" class="nx"></div>') + '</section>')
+          'MAPQ threshold (k ≥ 2 give contacts, k ≥ 3 are multi-way).</p><div id="cifi-card" class="nx"></div>')
 
 # ---------------- ONT reads mapped to hap1 / hap2 (--map_ont): samtools coverage + flagstat
 ONT, ONT_SEQ = [], []   # per assembly; per sequence >= 1 Mb
@@ -508,9 +508,10 @@ for run in RUNS:
                     100 * sum(x[3] for x in seqs) / tot, len(seqs),
                     sum(1 for x in big if x[4] < 0.5 * depth or x[4] > 2 * depth), base])
         ONT_SEQ += [[lab, x[0], x[1], x[4], 100 * x[3] / x[1], x[5], x[4] / depth if depth else None] for x in big]
+ONT_HTML = ""
 if ONT:
     f2 = lambda v, d=2: "NA" if v is None else f"{v:,.{d}f}"
-    parts.append(
+    ONT_HTML = (
         '<section id="ont"><h2>ONT read coverage</h2>'
         '<p class="note">ONT reads mapped with minimap2 to each haplotype (scaffolds with CiFi, contigs otherwise); '
         'primary alignments, from <code>samtools flagstat</code> and <code>samtools coverage</code>. Depth is the '
@@ -529,67 +530,159 @@ if ONT:
                  numeric_from=2))
         + '</section>')
 
+# ---------------- one section per topic; with several runs, one subsection per run
+multi = len(RUNS) > 1
+def run_head(run, level="h3"):
+    return f'<{level}>{esc(run["label"])}</{level}>' if multi else ""
+def links(files, base):
+    return " · ".join(f'<a href="{esc(os.path.relpath(f, outdir))}">{esc(os.path.relpath(f, base))}</a>' for f in files)
+def hap_of(path):
+    m = re.search(r"\.(hap[12])\.", os.path.basename(path))
+    return m[1] if m else ""
+
+spectra = []
 for run in RUNS:
-    lab = run["label"]
-    sec = [f'<section id="run-{esc(lab)}"><h2>Run {esc(lab)}</h2><p class="note"><code>{esc(run["path"])}</code></p>']
-    if run["reads"]:
-        sec.append("<p>Reads QC: " + " · ".join(
-            f'<a href="{esc(os.path.relpath(f, outdir))}">{esc(os.path.basename(f))}</a>' for f in run["reads"]) + "</p>")
-    if run["dotplots"]:
-        rs = [r for _, r, _ in run["dotplots"] if len(r) >= 10]
-        sec.append('<h3>Dot plots</h3><p class="note">Hover an alignment for coordinates; drag to zoom, double-click to '
-                   'reset. Blue same orientation, red inverted. Query sequences are ordered along the target and '
-                   'flipped (−) where most of them align reversed.</p>')
-        if rs:
-            sec.append(table(["Query", "Target", "Query aligned (%)", "Target aligned (%)", "Inverted (Mb)", "Alignments"],
-                             [[(r[0], ""), (r[1], ""), (r[5], "", num(r[5])), (r[7], "", num(r[7])),
-                               (mb(r[8]), "", num(r[8])), (intf(r[9]), "", num(r[9]))] for r in rs], 2))
-        figs = []
-        for png, r, js in run["dotplots"]:
-            cap = esc(" vs ".join(r[:2])) if r else esc(os.path.basename(png))
-            d = None
-            if js:
-                try: d = json.load(open(js))
-                except ValueError: d = None
-            if d and d.get("tseq") is not None:
-                key = f"dp{len(DATA['dp'])}"
-                DATA["dp"][key] = d
-                figs.append(f'<figure class="dpfig"><div class="dp" data-key="{key}"></div><figcaption>{cap}</figcaption></figure>')
-            elif os.path.getsize(png):
-                figs.append(fig(png, cap))
-        sec.append('<div class="grid dpgrid">' + "".join(figs) + "</div>")
-    if run["spectra"]:
-        sec.append('<h3>Merqury k-mer spectra</h3><div class="grid">' +
-                   "".join(fig(p, esc(os.path.basename(p))) for p in run["spectra"] if os.path.getsize(p)) + "</div>")
-    if run["contact"]:
-        sec.append('<h3>CiFi contact maps (scaffolds)</h3><div class="grid">' +
-                   "".join(fig(p, esc(os.path.basename(p))) for p in run["contact"] if os.path.getsize(p)) + "</div>")
-    if run["cifi_data"] or run["cifi_html"]:
-        sec.append("<h3>CiFi contact analysis</h3>")
-        if run["cifi_html"]:
-            sec.append('<p>cifi reports: ' + " · ".join(
-                f'<a href="{esc(os.path.relpath(f, outdir))}">{esc(os.path.relpath(f, os.path.join(run["path"], "cifi")))}</a>'
-                for f in run["cifi_html"]) + "</p>")
-        for d in run["cifi_data"]:
-            rows_ = [r for r in d.get("scaffolds", [])]
+    pngs = [p for p in run["spectra"] if os.path.getsize(p)]
+    if pngs:
+        spectra.append(run_head(run) + '<div class="grid">' + "".join(fig(p, esc(os.path.basename(p))) for p in pngs) + "</div>")
+if spectra:
+    parts.append('<section id="spectra"><h2>Merqury k-mer spectra</h2>'
+                 '<p class="note">Read k-mers by copy number in the assembly (spectra-cn) and by haplotype (spectra-asm).</p>'
+                 + "".join(spectra) + "</section>")
+
+dots = []
+for run in RUNS:
+    if not run["dotplots"]: continue
+    sec = [run_head(run)]
+    rs = [r for _, r, _ in run["dotplots"] if len(r) >= 10]
+    if rs:
+        sec.append(table(["Query", "Target", "Query aligned (%)", "Target aligned (%)", "Inverted (Mb)", "Alignments"],
+                         [[(r[0], ""), (r[1], ""), (r[5], "", num(r[5])), (r[7], "", num(r[7])),
+                           (mb(r[8]), "", num(r[8])), (intf(r[9]), "", num(r[9]))] for r in rs], 2))
+    figs = []
+    for png, r, js in run["dotplots"]:
+        cap = esc(" vs ".join(r[:2])) if r else esc(os.path.basename(png))
+        d = None
+        if js:
+            try: d = json.load(open(js))
+            except ValueError: d = None
+        if d and d.get("tseq") is not None:
+            key = f"dp{len(DATA['dp'])}"
+            DATA["dp"][key] = d
+            figs.append(f'<figure class="dpfig"><div class="dp" data-key="{key}"></div><figcaption>{cap}</figcaption></figure>')
+        elif os.path.getsize(png):
+            figs.append(fig(png, cap))
+    sec.append('<div class="grid dpgrid">' + "".join(figs) + "</div>")
+    dots.append("".join(sec))
+if dots:
+    parts.append('<section id="dotplots"><h2>Dot plots</h2><p class="note">Hover an alignment for coordinates; drag to '
+                 'zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
+                 'target and flipped (−) where most of them align reversed.</p>' + "".join(dots) + "</section>")
+
+# CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
+lib = []
+for run in RUNS:
+    if run["cifi_html"]:
+        lib.append(f'<p>{esc(run["label"]) + ": " if multi else ""}cifi reports: '
+                   + links(run["cifi_html"], os.path.join(run["path"], "cifi")) + "</p>")
+if MARKDUP:
+    lib.append('<p class="note">PCR duplicates (pbmarkdup): CiFi reads sequenced from the same molecule, before '
+               'digestion (the paper reports 1.8% for its GM12878 DpnII library). Rerun with <code>--cifi_rmdup</code> '
+               'to remove them.</p>' + table(["Run", "Reads", "Unique molecules", "Duplicate reads", "% duplicates"],
+               [[(m[0], ""), (f"{int(m[2]):,}", "", int(m[2])), (f"{int(m[3]):,}", "", int(m[3])),
+                 (f"{int(m[4]):,}", "", int(m[4])), (m[5], "", num(m[5]))] for m in MARKDUP]))
+per_hap = []
+for run in RUNS:
+    maps = [p for p in run["contact"] if os.path.getsize(p)]
+    data = {d["hap"]: d for d in run["cifi_data"]}
+    haps = sorted(set(data) | {hap_of(p) for p in maps})
+    if not haps: continue
+    sec = []
+    for h in haps:   # labels are <run>_<hap>, so no extra run heading
+        d = data.get(h)
+        name = d["label"] if d else f'{run["label"]}_{h}' if h else run["label"]
+        sec.append(f'<h3>{esc(name)}</h3>')
+        hm = [p for p in maps if hap_of(p) == h]
+        figs = [fig(p, "contact map (PretextSnapshot): " + esc(os.path.basename(p))) for p in hm]
+        if d and os.path.exists(d["png"]) and os.path.getsize(d["png"]):
+            figs.append(fig(d["png"], "segments per read, P(s), MAPQ and contact classes, coverage"))
+        if figs: sec.append('<div class="grid">' + "".join(figs) + "</div>")
+        rows_ = d.get("scaffolds", []) if d else []
+        if rows_:
             cis = sorted(r[6] for r in rows_ if r[6] is not None)
             med = cis[len(cis) // 2] if cis else None
             body = [[(r[0], ""), (f"{r[1] / 1e6:,.2f}", "", r[1]), (f"{r[2]:,}", "", r[2]), (f"{r[3]:,.1f}", "", r[3]),
                      (f"{r[4]:,}", "", r[4]), (f"{r[5]:,}", "", r[5]),
                      ("NA" if r[6] is None else f"{r[6]:.2f}", "low" if med and r[6] is not None and r[6] < 0.8 * med else "", r[6])]
                     for r in rows_]
-            sec.append(f'<h4>{esc(d["label"])}</h4>')
-            if os.path.exists(d["png"]) and os.path.getsize(d["png"]):
-                sec.append(fig(d["png"], f'{esc(d["label"])}: segments per read, P(s), MAPQ and contact classes, coverage'))
-            if body:
-                sec.append(f'<p class="note">Chromosome-scale scaffolds (≥ {d.get("min_scaf", 0) / 1e6:g} Mb). '
-                           '<span class="lowkey">Highlighted</span>: % cis below 80% of the median, worth a look in '
-                           'Juicebox (possible misjoin or a scaffold that belongs to another chromosome).</p>'
-                           + table(["Scaffold", "Length (Mb)", "Segments", "Segments/Mb", "cis contacts",
-                                    "trans contacts", "% cis"], body))
-    if len(sec) == 1 + bool(run["reads"]):
-        sec.append('<p class="note">No dot plots, spectra, contact maps or CiFi analysis found for this run.</p>')
-    parts.append("".join(sec) + "</section>")
+            sec.append(f'<p class="note">Chromosome-scale scaffolds (≥ {d.get("min_scaf", 0) / 1e6:g} Mb). '
+                       '<span class="lowkey">Highlighted</span>: % cis below 80% of the median, worth a look in '
+                       'Juicebox (possible misjoin or a scaffold that belongs to another chromosome).</p>'
+                       + table(["Scaffold", "Length (Mb)", "Segments", "Segments/Mb", "cis contacts",
+                                "trans contacts", "% cis"], body))
+    per_hap.append("".join(sec))
+HAS_CIFI = bool(lib or CIFI_SUMMARY or per_hap)
+if HAS_CIFI:
+    parts.append('<section id="cifi"><h2>CiFi</h2><p class="note">Library QC, contact statistics of all haplotypes, '
+                 'then per haplotype: contact map of the YaHS scaffolds, contact analysis and per-scaffold contacts.</p>'
+                 + ('<h3>Library</h3>' + "".join(lib) if lib else "")
+                 + CIFI_SUMMARY
+                 + "".join(per_hap)
+                 + "</section>")
+
+parts.append(ONT_HTML)
+
+# reads: per read type (HiFi, ONT, CiFi) from faster --table (reads/reads.stats.tsv) + faster-report links.
+# Coverage = bases / size of the run's hap1 contigs (a haploid genome size estimate).
+KINDS = {"hifi": "HiFi", "ont": "ONT", "cifi": "CiFi"}
+asm_size = {r[0]: num(r[1]) for r in rows}
+rtot, rfile = [], []
+for run in RUNS:
+    if not os.path.exists(run["readstats"]): continue
+    gsize = asm_size.get(f'{run["label"]}_hap1')
+    by_kind = {}
+    for l in list(open(run["readstats"]))[1:]:
+        f = l.rstrip("\n").split("\t")
+        if len(f) < 13: continue
+        fn = os.path.basename(f[0]); k = fn.split(".")[0]
+        kind = KINDS.get(k, k)
+        n, bp, mean, n50, q20, q30 = int(f[1]), int(f[2]), float(f[6]), int(f[10]), float(f[11]), float(f[12])
+        rfile.append([run["label"], kind, fn[len(k) + 1:] if k in KINDS else fn, n, bp, mean, n50, q30])
+        t = by_kind.setdefault(kind, [0, 0, 0, 0, 0.0, 0.0])          # files, reads, bases, max N50, Q20 bp, Q30 bp
+        t[0] += 1; t[1] += n; t[2] += bp; t[3] = max(t[3], n50); t[4] += q20 * bp; t[5] += q30 * bp
+    for kind, t in by_kind.items():
+        rtot.append([run["label"], kind, t[0], t[1], t[2], t[2] / t[1] if t[1] else None, t[3],
+                     t[4] / t[2] if t[2] else None, t[5] / t[2] if t[2] else None, t[2] / gsize if gsize else None])
+rlinks = [(f'<p>{esc(run["label"]) + ": " if multi else ""}faster-report: '
+           + links(run["reads"], os.path.join(run["path"], "reads")) + "</p>") for run in RUNS if run["reads"]]
+HAS_READS = bool(rtot or rlinks)
+if HAS_READS:
+    g = lambda v, d=1: "NA" if v is None else f"{v:,.{d}f}"
+    lead = [("Run", 0)] if multi else []
+    sec = ['<section id="reads"><h2>Reads</h2>']
+    if rtot:
+        sec.append('<p class="note">Starting reads (before filters), from <code>faster --table</code>. N50 is the largest '
+                   'of the files; Q20 / Q30 are base-weighted over the files. Coverage = bases / hap1 contig size of the '
+                   'run (a haploid genome size estimate): per haplotype it is half of that for HiFi and ONT.</p>'
+                   + table([c for c, _ in lead] + ["Type", "Files", "Reads (n)", "Bases (Gb)", "Mean length (kb)",
+                            "N50 (kb)", "Q20 (%)", "Q30 (%)", "Coverage (×)"],
+                           [[(r[0], "")] * bool(multi) + [(r[1], ""), (str(r[2]), "", r[2]), (f"{r[3]:,}", "", r[3]),
+                             (g(r[4] / 1e9, 2), "", r[4]), (g(r[5] and r[5] / 1e3), "", r[5]), (g(r[6] / 1e3), "", r[6]),
+                             (g(r[7], 2), "", r[7]), (g(r[8], 2), "", r[8]), (g(r[9]), "", r[9])] for r in rtot],
+                           1 + bool(multi)))
+        sec.append('<details><summary>Per file</summary>' + table(
+            [c for c, _ in lead] + ["Type", "File", "Reads (n)", "Bases (Gb)", "Mean length (kb)", "N50 (kb)", "Q30 (%)"],
+            [[(r[0], "")] * bool(multi) + [(r[1], ""), (r[2], ""), (f"{r[3]:,}", "", r[3]), (g(r[4] / 1e9, 2), "", r[4]),
+              (g(r[5] / 1e3), "", r[5]), (g(r[6] / 1e3), "", r[6]), (g(r[7], 2), "", r[7])] for r in rfile],
+            2 + bool(multi)) + "</details>")
+    sec += rlinks
+    parts.insert(0, "".join(sec) + "</section>")
+
+# commands: the nextflow command of each run (pipeline_info/command.txt) and this script's
+cmds = [(f'nxf-cifi run {run["label"]}', open(run["command"]).read().strip()) for run in RUNS if os.path.exists(run["command"])]
+cmds.append(("report", os.environ.get("REPORT_CMD", "compare_assemblies.sh").strip()))
+CMD_HTML = ('<details class="cmd"><summary>Command used</summary>'
+            + "".join(f'<p class="note">{esc(t)}</p><pre>{esc(c)}</pre>' for t, c in cmds) + "</details>")
 
 CSS = r"""
 :root { --bg:#f7f7f5; --fg:#1d1f21; --muted:#676c73; --line:#e1e2de; --card:#ffffff; --accent:#1f5fa8; --best:#e3edf9; --worse:#fbe5e1; --hover:#f1f4f8; }
@@ -607,6 +700,11 @@ nav { padding:10px 0; border-bottom:1px solid var(--line); overflow-x:auto; whit
 nav a { color:var(--accent); text-decoration:none; margin-right:18px }
 a { color:var(--accent) }
 code { font-size:12px; word-break:break-all }
+details { margin:10px 0 }
+details > summary { cursor:pointer; color:var(--accent) }
+details.cmd { margin:16px 0 0 }
+pre { font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:var(--card); border:1px solid var(--line);
+      border-radius:6px; padding:10px 12px; margin:4px 0 10px; white-space:pre-wrap; word-break:break-all }
 .scroll { overflow-x:auto; width:fit-content; max-width:100%; border:1px solid var(--line); border-radius:6px; background:var(--card) }
 table { border-collapse:collapse; font-size:13px }
 th, td { padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; text-align:left }
@@ -1064,8 +1162,10 @@ document.querySelectorAll('.dp').forEach(h => dotplot(h, D.dp[h.dataset.key]));
 })();
 """
 
-nav = '<a href="#assemblies">Assemblies</a><a href="#plots">Plots</a>' + ('<a href="#cifi">CiFi contacts</a>' if DATA["cifi"] or MARKDUP else "") + ('<a href="#ont">ONT coverage</a>' if ONT else "") + "".join(
-    f'<a href="#run-{esc(r["label"])}">{esc(r["label"])}</a>' for r in RUNS)
+nav = "".join(f'<a href="#{i}">{t}</a>' for i, t, show in [("reads", "Reads", HAS_READS),
+    ("assemblies", "Assemblies", True), ("plots", "Plots", True), ("spectra", "k-mer spectra", bool(spectra)),
+    ("dotplots", "Dot plots", bool(dots)), ("cifi", "CiFi", HAS_CIFI), ("ont", "ONT coverage", bool(ONT)),
+    ] if show)
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 data_json = json.dumps(DATA, separators=(",", ":")).replace("</", "<\\/")
 page = f"""<!doctype html>
@@ -1076,7 +1176,7 @@ page = f"""<!doctype html>
 <header><h1>{esc(title)}</h1>
 <p class="meta">{len(rows)} assemblies · {len(RUNS)} run(s) · generated {now}</p>
 <nav>{nav}</nav></header>
-<main>{"".join(parts)}</main>
+<main>{CMD_HTML}{"".join(parts)}</main>
 <footer>compare_assemblies.sh (nxf-cifi) · tables: comparison.tsv, hap_pairs.tsv · static plots: comparison.png, nx_curves.png</footer>
 <div id="tip"></div>
 <script type="application/json" id="report-data">{data_json}</script>

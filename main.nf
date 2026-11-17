@@ -67,7 +67,7 @@ process FASTER_REPORT {
     errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
     publishDir "${params.outdir}/reads", mode: params.publish_mode
     input:  tuple val(kinds), path(files, stageAs: 'in/?/*'), val(filetypes)
-    output: path "reads.faster-report.html"
+    output: path "reads.{faster-report.html,stats.tsv}"
     script:
     def platforms = kinds.collect { it == 'ont' ? 'ont' : 'pacbio' }.unique()
     def platform = platforms.size() > 1 ? 'multiple' : platforms[0]
@@ -76,6 +76,7 @@ process FASTER_REPORT {
     """
     mkdir reads      # in/<n>/<file> -> reads/<kind>.<file>, in the order of kinds
     i=1; for k in ${kinds.join(' ')}; do for f in in/\$i/*; do b=\$(basename \$f); [[ \$b == \$k* ]] || b=\$k.\$b; ln -s ../\$f reads/\$b; done; i=\$((i + 1)); done
+    faster --table reads/* > reads.stats.tsv     # per file: reads, bases, lengths, N50, Q20/Q30 (report Reads section)
     # as in angelovangel/faster-report main.nf: assets + run info from the first read header
     cp /temp/custom.css ./custom.css 2>/dev/null || true
     mkdir -p www && cp -r /temp/www/*.png ./www/ 2>/dev/null || true
@@ -94,6 +95,8 @@ process FASTER_REPORT {
     def platforms = kinds.collect { it == 'ont' ? 'ont' : 'pacbio' }.unique()
     """
     echo "${platforms.size() > 1 ? 'multiple' : platforms[0]} ${filetypes.unique().size() > 1 ? 'multiple' : filetypes[0]} ${kinds.join(',')}" > reads.faster-report.html
+    printf "file\\treads\\tbases\\tn_bases\\tmin_len\\tmax_len\\tmean_len\\tQ1\\tQ2\\tQ3\\tN50\\tQ20_percent\\tQ30_percent\\n" > reads.stats.tsv
+    i=0; for k in ${kinds.join(' ')}; do i=\$((i + 1)); printf "reads/%s.r%d.fastq.gz\\t100\\t1000000\\t0\\t5000\\t20000\\t10000\\t8000\\t10000\\t12000\\t11000\\t99.5\\t95.1\\n" \$k \$i >> reads.stats.tsv; done
     """
 }
 
@@ -519,13 +522,22 @@ process REPORT {
         path(cifistats, stageAs: 'cifi/stats/*')
         path(markdup,   stageAs: 'cifi/markdup/*')
         path(ontcov,    stageAs: 'ont_mapping/*')
-    output: path 'report'
+        val(command)                       // the nextflow command line, shown in the report
+    output:
+        path 'report'
+        path 'pipeline_info/command.txt'
     script:
     def label = params.prefix.toString().replaceAll(/[^A-Za-z0-9_]/, '_')
-    "compare_assemblies.sh -d ${label}=. -p -o report -t 'nxf-cifi: ${params.prefix}'"
-    stub:
+    def cmd = command.toString().replace("'", "'\\''")      // single-quoted for the shell
     """
-    mkdir report; touch report/report.html
+    mkdir -p pipeline_info
+    printf '%s\\n' '${cmd}' > pipeline_info/command.txt
+    compare_assemblies.sh -d ${label}=. -p -o report -t 'nxf-cifi: ${params.prefix}'
+    """
+    stub:
+    def cmd = command.toString().replace("'", "'\\''")
+    """
+    mkdir -p report pipeline_info; touch report/report.html; printf '%s\\n' '${cmd}' > pipeline_info/command.txt
     """
 }
 
@@ -685,6 +697,8 @@ workflow {
         ch_readsqc.collect().ifEmpty([]),
         ch_cifi_stats.flatten().collect().ifEmpty([]),
         ch_markdup.collect().ifEmpty([]),
-        ch_ont_cov.flatten().collect().ifEmpty([])
+        ch_ont_cov.flatten().collect().ifEmpty([]),
+        // plain String: a GString input cannot be serialized for -resume
+        "${workflow.commandLine}\n# nxf-cifi ${workflow.revision ?: ''} ${workflow.commitId ?: ''} · Nextflow ${nextflow.version} · ${workflow.start}".toString()
     )
 }

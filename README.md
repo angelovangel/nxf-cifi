@@ -87,9 +87,9 @@ Options are defined in `nextflow_schema.json` and checked at start by the nf-sch
 ## Output
 
 ```
-report/report.html                tables, Nx + metric plots, CiFi contact analysis, dot plots, k-mer spectra, contact maps, links
+report/report.html                reads, assemblies, Nx + metric plots, k-mer spectra, dot plots, CiFi, ONT coverage; command used
 summary.tsv                       per assembly: contiguity, telomeres, BUSCO, QV, k-mer completeness
-reads/                            reads.faster-report.html: one report for all reads (+ merged CiFi BAM)
+reads/                            reads.faster-report.html: one report for all reads (+ merged CiFi BAM); reads.stats.tsv (faster --table)
 cifi/qc  cifi/digest              cifi qc report, digest report, segments, R1/R2
 cifi/markdup                      pbmarkdup duplicate summary (<prefix>.cifi.markdup.tsv) + log
 cifi/contacts                     cifi contacts report + stats per haplotype
@@ -99,7 +99,7 @@ fasta/                            contigs (+ .fai) and <hap>.scaffolds.fa
 scaffolds/<hap>/                  yahs output, <hap>_JBAT.* (Juicebox), .hic, .pretext + snapshot PNGs
 eval/{stats,telomeres,compleasm,merqury}
 dotplots/                         <query>_vs_<target>.dotplot.{png,json,tsv} (+ .paf.gz); tsv = % of each side aligned, inverted bp
-pipeline_info/                    timeline, resource report, trace
+pipeline_info/                    timeline, resource report, trace; command.txt (nextflow command line)
 ```
 
 After curation in Juicebox (load `<hap>_JBAT.hic`, import `<hap>_JBAT.assembly`, export `review.assembly`):
