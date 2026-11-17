@@ -603,10 +603,10 @@ for run in RUNS:
         name = d["label"] if d else f'{run["label"]}_{h}' if h else run["label"]
         sec.append(f'<h3>{esc(name)}</h3>')
         hm = [p for p in maps if hap_of(p) == h]
-        figs = [fig(p, "contact map (PretextSnapshot): " + esc(os.path.basename(p))) for p in hm]
-        if d and os.path.exists(d["png"]) and os.path.getsize(d["png"]):
-            figs.append(fig(d["png"], "segments per read, P(s), MAPQ and contact classes, coverage"))
-        if figs: sec.append('<div class="grid">' + "".join(figs) + "</div>")
+        if hm: sec.append('<div class="grid">' + "".join(
+            fig(p, "contact map (PretextSnapshot): " + esc(os.path.basename(p))) for p in hm) + "</div>")
+        if d and os.path.exists(d["png"]) and os.path.getsize(d["png"]):   # multi-panel figure: full width
+            sec.append(fig(d["png"], f'{esc(d["label"])}: segments per read, P(s), MAPQ and contact classes, coverage'))
         rows_ = d.get("scaffolds", []) if d else []
         if rows_:
             cis = sorted(r[6] for r in rows_ if r[6] is not None)
