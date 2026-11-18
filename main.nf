@@ -617,6 +617,7 @@ workflow {
         // ---------------------------------------------------------------- scaffolding
         ch_scaf = Channel.empty()
         ch_contact = Channel.empty()
+        ch_agp = Channel.empty()          // YaHS AGPs: scaffold layout panel of the report
         ch_cifi_stats = Channel.empty()
         if (params.cifi) {
             ch_haps = ch_ctg.filter { n, _fa, _fai -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
@@ -627,6 +628,7 @@ workflow {
             ch_scaf = YAHS.out.scaffolds.map { n, fa -> [n + '.scaffolds', fa] }
             if (params.juicer_jar) JUICER_TOOLS(YAHS.out.jbat, Channel.value(file(params.juicer_jar, checkIfExists: true)))
             if (!params.skip_pretext) ch_contact = PRETEXTSNAPSHOT(PRETEXTMAP(YAHS.out.pairs))
+            ch_agp = YAHS.out.agp.map { _n, agp -> agp }
         }
 
         // ---------------------------------------------------------------- evaluation
@@ -697,7 +699,7 @@ workflow {
             // only per-set files (haps.*, primary.*): every set also writes the same-named <db>.hist
             ch_merq_files.flatten().filter { f -> f.name ==~ /^(haps|primary)\..*/ }.collect().ifEmpty([]),
             ch_dot.flatten().collect().ifEmpty([]),
-            ch_contact.flatten().collect().ifEmpty([]),
+            ch_contact.flatten().mix(ch_agp).collect().ifEmpty([]),     // staged as scaffolds/*
             ch_readsqc.collect().ifEmpty([]),
             ch_cifi_stats.flatten().collect().ifEmpty([]),
             ch_markdup.collect().ifEmpty([]),

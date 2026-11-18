@@ -224,6 +224,7 @@ for spec in specs:
         spectra=sorted(f for f in glob.glob(os.path.join(ev, "merqury", "*.png"))
                        if re.search(r"^(haps|primary)\.spectra-(cn|asm)\.fl\.png$", os.path.basename(f))),
         contact=sorted(glob.glob(os.path.join(path, "scaffolds", "**", "*.png"), recursive=True)),
+        agp=sorted(glob.glob(os.path.join(path, "scaffolds", "**", "*.yahs_scaffolds_final.agp"), recursive=True)),
         cifi=sorted(glob.glob(os.path.join(path, "cifi", "stats", "*.cifi_stats.json"))),
         markdup=sorted(glob.glob(os.path.join(path, "cifi", "markdup", "*.markdup.tsv"))),
         ontcov=sorted(glob.glob(os.path.join(path, "ont_mapping", "*.ont.coverage.tsv"))),
@@ -381,7 +382,7 @@ def nx_points(ls):
     pts.append([100.0, ls[-1], len(ls)])
     return pts
 
-DATA = {"rows": [], "nx": {}, "dp": {}, "hic": {}}
+DATA = {"rows": [], "nx": {}, "dp": {}, "hic": {}, "scaf": {}}
 for r in rows:
     m = re.search(r"_(hap[12]|primary)$", r[0])
     DATA["rows"].append({"label": r[0], "group": grp(r[0]), "color": gcol[grp(r[0])], "hap": m[1] if m else "",
@@ -604,6 +605,43 @@ if dots:
                  'under the cursor; near an alignment, all alignments of that query–target pair and a summary of them; drag to zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
                  'target and flipped (−) where most of them align reversed.</p>' + "".join(dots) + "</section>")
 
+# scaffold layout per haplotype: YaHS AGP (contigs, orientation, gaps) + telomere ends of the scaffolds
+def read_agp(fn):
+    rows, idx = [], {}
+    for line in open(fn):
+        f = line.rstrip("\n").split("\t")
+        if line.startswith("#") or len(f) < 9: continue
+        s, b, e = f[0], int(f[1]) - 1, int(f[2])
+        if s not in idx: idx[s] = len(rows); rows.append([s, 0, [], [], 0, 0])   # name, length, contigs, gaps, telo
+        r = rows[idx[s]]; r[1] = max(r[1], e)
+        if f[4] in ("N", "U"): r[3].append([b, e])
+        else: r[2].append([f[5], b, e, f[8], int(f[6]) - 1, int(f[7])])        # contig, start, end, orient, cstart, cend
+    return rows, idx
+scafs = []
+for run in RUNS:
+    figs = []
+    for fn in run["agp"]:
+        name = os.path.basename(fn)[:-len(".yahs_scaffolds_final.agp")]
+        rows, idx = read_agp(fn)
+        tt = os.path.join(run["path"], "eval", "telomeres", f"{name}.scaffolds.telo.tsv")
+        if os.path.exists(tt):
+            for line in list(open(tt))[1:]:
+                f = line.rstrip("\n").split("\t")
+                if len(f) >= 6 and f[0] in idx: rows[idx[f[0]]][4:6] = [int(f[4]), int(f[5])]
+        if not rows: continue
+        key = f"scaf{len(DATA['scaf'])}"
+        DATA["scaf"][key] = {"rows": rows}
+        h = hap_of(fn)
+        lab = f'{run["label"]}_{h}' if h else f'{run["label"]}_{name}'
+        figs.append(f'<figure class="scfig"><div class="scaf" data-key="{key}"></div><figcaption>{esc(lab)}: '
+                    f'{sum(1 for r in rows if r[1] >= 1e6)} scaffolds ≥ 1 Mb of {len(rows)}</figcaption></figure>')
+    if figs: scafs.append(run_head(run) + '<div class="grid scgrid">' + "".join(figs) + "</div>")
+if scafs:
+    parts.append('<section id="scaffolds"><h2>Scaffolds</h2><p class="note">YaHS scaffolds per haplotype: contigs '
+                 'in alternating colours (arrow: orientation), gaps as dark marks, '
+                 '<span style="color:#2e9a52">■</span> telomere at that end. Hover a contig for details; click a '
+                 'scaffold to stretch it to full width (click again to go back).</p>' + "".join(scafs) + "</section>")
+
 # CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
 lib = []
 for run in RUNS:
@@ -778,6 +816,10 @@ svg .n50 { stroke:#c9ccd0; stroke-dasharray:4 4 }
 .legend svg { width:26px; height:10px }
 .dp { position:relative; width:100% }
 .hicfig { max-width:820px }
+.scgrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 560px), 1fr)) }
+.scaf svg { display:block; width:100%; height:auto; overflow:visible }
+.scaf .row { cursor:pointer } .scaf .row:hover .lab { font-weight:700 }
+.scaf .more { font:12px inherit; margin-top:6px; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer }
 .hic { position:relative; width:100% }
 .hic canvas { display:block; cursor:grab; max-width:100%; touch-action:none } .hic canvas.drag { cursor:grabbing }
 .hic .reset { position:absolute; top:4px; left:4px; font:12px inherit; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer; display:none }
@@ -1262,6 +1304,55 @@ function hicMap(host, h) {
   if (window.ResizeObserver) new ResizeObserver(layout).observe(host); else window.addEventListener('resize', layout);
 }
 
+/* ---------------------------------------------------------------- scaffold layout (YaHS AGP) */
+// d.rows: [name, length, contigs [[ctg, start, end, orient, cstart, cend]], gaps [[start, end]], telo_start, telo_end]
+function scafLayout(host, d) {
+  const all = d.rows, big = all.filter(r => r[1] >= 1e6), rest = all.length - big.length;
+  const restBp = all.filter(r => r[1] < 1e6).reduce((a, r) => a + r[1], 0);
+  let showAll = !big.length, zoom = new Set();
+  const W = 560, LW = 118, RW = 54, RH = 16, BH = 10, C = ['#3f78b5', '#9cc3e6'];
+  function draw() {
+    host.innerHTML = '';
+    const rows = showAll ? all : big, maxL = Math.max(...rows.map(r => r[1]), 1), bw = W - LW - RW;
+    const svg = el('svg', {viewBox: `0 0 ${W} ${rows.length * RH + 4}`}, host);
+    rows.forEach((r, i) => {
+      const [nm, L, ctgs, gaps, t0, t1] = r, y = i * RH + 2, z = zoom.has(nm), sc = bw / (z ? L : maxL);
+      const g = el('g', {class: 'row'}, svg);
+      el('rect', {x: 0, y, width: W, height: RH, fill: 'transparent'}, g);
+      const lab = el('text', {x: LW - 6, y: y + RH / 2 + 4, 'text-anchor': 'end', class: 'lab', 'font-size': 11, fill: '#3b3f45'}, g);
+      lab.textContent = nm.replace(/^scaffold_/, 's') + (z ? ' ⇔' : '');
+      const len = el('text', {x: LW + bw * (z ? 1 : L / maxL) + 6, y: y + RH / 2 + 4, 'font-size': 10, fill: '#6b7078'}, g);
+      len.textContent = flen(L);
+      ctgs.forEach((c, k) => {
+        const x = LW + c[1] * sc, w = Math.max((c[2] - c[1]) * sc, .6);
+        const rc = el('rect', {x, y: y + (RH - BH) / 2, width: w, height: BH, fill: C[k % 2]}, g);
+        if (w > 12) {                                   // orientation arrow
+          const cx = x + w / 2, cy = y + RH / 2, a = c[3] === '-' ? -1 : 1;
+          el('path', {d: `M${cx - 3 * a},${cy - 3} L${cx + 3 * a},${cy} L${cx - 3 * a},${cy + 3}`, fill: 'none', stroke: '#fff', 'stroke-width': 1.3}, g);
+        }
+        rc.addEventListener('mousemove', ev => showTip(
+          `<b>${escH(c[0])}</b> (${c[3]}) · ${flen(c[2] - c[1])}<br>contig ${fint(c[4] + 1)}–${fint(c[5])}` +
+          (c[5] - c[4] < c[2] - c[1] || c[4] > 0 ? ' (part)' : '') + `<br>${escH(nm)} ${flen(c[1])}–${flen(c[2])} · contig ${k + 1} of ${ctgs.length}`, ev));
+        rc.addEventListener('mouseleave', hideTip);
+      });
+      gaps.forEach(([a]) => el('rect', {x: LW + a * sc - .5, y: y + 1, width: 1.2, height: RH - 2, fill: '#2b2f35'}, g));
+      const tx = LW + L * sc;
+      if (t0) el('rect', {x: LW - 3, y: y + 2, width: 3, height: RH - 4, fill: '#2e9a52'}, g);
+      if (t1) el('rect', {x: tx, y: y + 2, width: 3, height: RH - 4, fill: '#2e9a52'}, g);
+      lab.addEventListener('mousemove', ev => showTip(`<b>${escH(nm)}</b> · ${flen(L)}<br>${ctgs.length} contig${ctgs.length > 1 ? 's' : ''}, ` +
+        `${gaps.length} gap${gaps.length === 1 ? '' : 's'}<br>telomere: ${t0 && t1 ? 'both ends (T2T)' : t0 ? 'start' : t1 ? 'end' : 'none'}`, ev));
+      lab.addEventListener('mouseleave', hideTip);
+      g.addEventListener('click', () => { zoom.has(nm) ? zoom.delete(nm) : zoom.add(nm); hideTip(); draw(); });
+    });
+    if (rest && big.length) {
+      const b = document.createElement('button'); b.className = 'more';
+      b.textContent = showAll ? `show only scaffolds ≥ 1 Mb` : `show all (+${rest.toLocaleString()} scaffolds < 1 Mb, ${flen(restBp)})`;
+      b.onclick = () => { showAll = !showAll; draw(); }; host.appendChild(b);
+    }
+  }
+  draw();
+}
+
 /* ---------------------------------------------------------------- generic line chart (CiFi) */
 function lineChart(host, series, o) {
   // series: [{label, color, dash, pts: [[x, y], ...]}]; o: {xlog, ylog, xfmt, yfmt, xlabel, ylabel, title, tipHead}
@@ -1353,12 +1444,13 @@ nxCurves();
 cifiCharts();
 document.querySelectorAll('.dp').forEach(h => dotplot(h, D.dp[h.dataset.key]));
 document.querySelectorAll('.hic').forEach(h => hicMap(h, D.hic[h.dataset.key]));
+document.querySelectorAll('.scaf').forEach(h => scafLayout(h, D.scaf[h.dataset.key]));
 })();
 """
 
 nav = "".join(f'<a href="#{i}">{t}</a>' for i, t, show in [("reads", "Reads", HAS_READS),
     ("assemblies", "Assemblies", True), ("plots", "Plots", True), ("spectra", "k-mer spectra", bool(spectra)),
-    ("dotplots", "Dot plots", bool(dots)), ("cifi", "CiFi", HAS_CIFI), ("ont", "ONT coverage", bool(ONT)),
+    ("dotplots", "Dot plots", bool(dots)), ("scaffolds", "Scaffolds", bool(scafs)), ("cifi", "CiFi", HAS_CIFI), ("ont", "ONT coverage", bool(ONT)),
     ] if show)
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 data_json = json.dumps(DATA, separators=(",", ":")).replace("</", "<\\/")
