@@ -130,8 +130,7 @@ process CIFI_MARKDUP {
 }
 
 process CIFI_BAM {
-    label 'mid'
-    publishDir "${params.outdir}/reads", mode: params.publish_mode
+    label 'mid'     // merged CiFi BAM: intermediate, not published
     input:  path(reads, stageAs: 'in/*')
     output: path "${params.prefix}.cifi.bam"
     script: "cifi_bam.sh ${params.prefix}.cifi.bam ${task.cpus} ${reads}"
@@ -155,7 +154,8 @@ process CIFI_QC {
 
 process CIFI_DIGEST {
     label 'mid'
-    publishDir "${params.outdir}/cifi", mode: params.publish_mode
+    // digest report only: segments and R1/R2 FASTQs are intermediates (large), not published
+    publishDir "${params.outdir}/cifi", mode: params.publish_mode, saveAs: { it ==~ /.*\.f(ast)?q(\.gz)?$/ ? null : it }
     input:  path bam
     output:
         path "digest/${params.prefix}.segments.fastq.gz", emit: segments
@@ -307,7 +307,8 @@ process CIFI_CONTACTS {
 process YAHS {
     tag "$name"
     label 'mid'
-    publishDir "${params.outdir}/scaffolds/${name}", mode: params.publish_mode, pattern: '{*.yahs*,*_JBAT*,*.log}'
+    publishDir "${params.outdir}/scaffolds/${name}", mode: params.publish_mode, pattern: '{*.yahs*,*_JBAT*,*.log}',
+        saveAs: { it.endsWith('_scaffolds_final.fa') ? null : it }       // same as fasta/<name>.scaffolds.fa
     publishDir "${params.outdir}/fasta", mode: params.publish_mode, pattern: '*.scaffolds.fa'
     input:  tuple val(name), path(fa), path(fai), path(bed)
     output:
@@ -428,8 +429,7 @@ process COMPLEASM {
 }
 
 process MERYL_COUNT {
-    label 'big'
-    publishDir "${params.outdir}/eval/merqury", mode: params.publish_mode
+    label 'big'     // HiFi k-mer database: large, not published (stays in work/, reuse with --meryl_db)
     input:  path reads
     output: path "hifi.k${params.kmer}.meryl"
     script:
@@ -549,7 +549,10 @@ workflow {
     if (params.assembly) {
         if (!params.cifi) error "--assembly needs --cifi (CiFi scaffolding of an existing assembly); see --help"
         if (asmFiles.size() > 2) error "--assembly takes one or two FASTAs (hap1[,hap2]), got ${asmFiles.size()}"
-    } else if (!params.hifi) error "--hifi is required (or --assembly + --cifi); see --help"
+    } else if (!params.hifi && !params.cifi) error "--hifi is required (or --assembly + --cifi, or --cifi alone for CiFi QC); see --help"
+    // --cifi without --hifi / --assembly: CiFi library QC only (reads QC, duplicates, cifi qc, digest)
+    def cifiOnly = params.cifi && !params.hifi && !params.assembly
+    if (cifiOnly) log.info "--cifi without --hifi or --assembly: CiFi QC only (no assembly, scaffolding or report)"
     // name of the assembly set: hifiasm bp (no CiFi) / hic (CiFi phasing) or asm (--assembly)
     def mode = params.assembly ? 'asm' : params.cifi ? 'hic' : 'bp'
 
@@ -599,106 +602,108 @@ workflow {
         ch_segments = CIFI_DIGEST.out.segments
     }
 
-    // ---------------------------------------------------------------- hifiasm, or an existing assembly
-    if (params.assembly) {
-        // hap1[,hap2] in the given order -> <prefix>.asm.hap1.p_ctg / .hap2.p_ctg (same names as a hifiasm run)
-        def asm = asmFiles.withIndex().collect { f, i -> ["${params.prefix}.asm.hap${i + 1}.p_ctg", file(f, checkIfExists: true)] }
-        asm.each { n, f -> log.info "  ${f} -> fasta/${n}.fa" }
-        ch_ctg = ASM_IMPORT(Channel.fromList(asm))
-    } else {
-        HIFIASM(ch_hifi, ch_ont, ch_hic)
-        ch_ctg = GFA2FASTA(HIFIASM.out.gfa.flatten())    // [name, fa, fai]
-    }
-
-    // ---------------------------------------------------------------- scaffolding
-    ch_scaf = Channel.empty()
-    ch_contact = Channel.empty()
-    ch_cifi_stats = Channel.empty()
-    if (params.cifi) {
-        ch_haps = ch_ctg.filter { n, _fa, _fai -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
-        MAP_SEGMENTS(ch_haps.combine(ch_segments))
-        CIFI_CONTACTS(MAP_SEGMENTS.out.bam)
-        YAHS(ch_haps.join(CIFI_CONTACTS.out.bed))
-        if (!params.skip_cifi_stats) ch_cifi_stats = CIFI_STATS(MAP_SEGMENTS.out.table.join(YAHS.out.agp))
-        ch_scaf = YAHS.out.scaffolds.map { n, fa -> [n + '.scaffolds', fa] }
-        if (params.juicer_jar) JUICER_TOOLS(YAHS.out.jbat, Channel.value(file(params.juicer_jar, checkIfExists: true)))
-        if (!params.skip_pretext) ch_contact = PRETEXTSNAPSHOT(PRETEXTMAP(YAHS.out.pairs))
-    }
-
-    // ---------------------------------------------------------------- evaluation
-    ch_contigs = ch_ctg.map { n, fa, _fai -> [n, fa] }
-    ASM_STATS(ch_contigs.mix(ch_scaf))
-    ch_telo = ASM_STATS.out[1].flatten().filter { it.name.endsWith('.telo.tsv') }
-    ch_gaps = ASM_STATS.out[1].flatten().filter { it.name.endsWith('.gaps.bed') }
-
-    // compleasm + merqury on contigs only: scaffolds carry the same sequence
-    ch_busco = Channel.empty()
-    if (!params.skip_busco) {
-        ch_lin = params.lineage_dir ? Channel.value(file(params.lineage_dir, checkIfExists: true)) : COMPLEASM_DOWNLOAD()
-        ch_busco = COMPLEASM(ch_contigs.filter { n, _fa -> !n.endsWith('a_ctg') }, ch_lin).summary
-    }
-
-    ch_merq = Channel.empty()
-    ch_merq_files = Channel.empty()
-    if (!params.skip_merqury && (params.meryl_db || params.hifi)) {     // merqury needs HiFi reads or a meryl DB
-        ch_db = params.meryl_db ? Channel.value(file(params.meryl_db, checkIfExists: true)) : MERYL_COUNT(ch_hifi)
-        ch_sets = ch_contigs
-            .filter { n, _fa -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
-            .toSortedList { a, b -> a[0] <=> b[0] }
-            .filter { it.size() == 2 }
-            .map { l -> ['haps', l.collect { it[1] }] }
-            .mix(ch_contigs.filter { n, _fa -> n.endsWith(".${mode}.p_ctg") }.map { _n, fa -> ['primary', [fa]] })
-        MERQURY(ch_sets, ch_db)
-        ch_merq = MERQURY.out.tables
-        ch_merq_files = MERQURY.out.files
-    }
-
-    // ONT reads on hap1 / hap2: scaffolds with CiFi, contigs otherwise (--map_ont)
-    ch_ont_cov = Channel.empty()
-    if (params.map_ont && params.ont) {
-        def ch_targets = (params.cifi ? ch_scaf : ch_contigs)
-            .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
-        ch_ont_cov = MAP_ONT(ch_targets, ch_ont).stats
-    } else if (params.map_ont) {
-        log.warn "--map_ont without --ont: no ONT reads to map"
-    }
-
-    // dot plots: hap2 vs hap1 (contigs, scaffolds) and, with --ref, every assembly vs the reference
-    ch_dot = Channel.empty()
-    if (!params.skip_dotplot) {
-        def ch_asm = ch_contigs.mix(ch_scaf)
-        def h1 = ch_asm.filter { n, _fa -> n.contains(".${mode}.hap1.") }.map { n, fa -> [n.replace('.hap1.', '.hapN.'), n, fa] }
-        def h2 = ch_asm.filter { n, _fa -> n.contains(".${mode}.hap2.") }.map { n, fa -> [n.replace('.hap2.', '.hapN.'), n, fa] }
-        ch_pairs = h2.join(h1).map { _k, n2, fa2, n1, fa1 -> [n2.replace('.hap2.', '.hap2_vs_hap1.'), n2, fa2, n1, fa1] }
-        if (params.ref) {
-            def ref = file(params.ref, checkIfExists: true)
-            def refName = ref.name.replaceAll(/\.(fa|fasta|fna)(\.gz)?$/, '')
-            ch_pairs = ch_pairs.mix(ch_asm.filter { n, _fa -> !n.endsWith('a_ctg') }
-                                          .map { n, fa -> ["${n}_vs_${refName}", n, fa, refName, ref] })
+    if (!cifiOnly) {     // everything below needs an assembly
+        // ---------------------------------------------------------------- hifiasm, or an existing assembly
+        if (params.assembly) {
+            // hap1[,hap2] in the given order -> <prefix>.asm.hap1.p_ctg / .hap2.p_ctg (same names as a hifiasm run)
+            def asm = asmFiles.withIndex().collect { f, i -> ["${params.prefix}.asm.hap${i + 1}.p_ctg", file(f, checkIfExists: true)] }
+            asm.each { n, f -> log.info "  ${f} -> fasta/${n}.fa" }
+            ch_ctg = ASM_IMPORT(Channel.fromList(asm))
+        } else {
+            HIFIASM(ch_hifi, ch_ont, ch_hic)
+            ch_ctg = GFA2FASTA(HIFIASM.out.gfa.flatten())    // [name, fa, fai]
         }
-        ch_dot = DOTPLOT(DOTPLOT_ALIGN(ch_pairs))
+
+        // ---------------------------------------------------------------- scaffolding
+        ch_scaf = Channel.empty()
+        ch_contact = Channel.empty()
+        ch_cifi_stats = Channel.empty()
+        if (params.cifi) {
+            ch_haps = ch_ctg.filter { n, _fa, _fai -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
+            MAP_SEGMENTS(ch_haps.combine(ch_segments))
+            CIFI_CONTACTS(MAP_SEGMENTS.out.bam)
+            YAHS(ch_haps.join(CIFI_CONTACTS.out.bed))
+            if (!params.skip_cifi_stats) ch_cifi_stats = CIFI_STATS(MAP_SEGMENTS.out.table.join(YAHS.out.agp))
+            ch_scaf = YAHS.out.scaffolds.map { n, fa -> [n + '.scaffolds', fa] }
+            if (params.juicer_jar) JUICER_TOOLS(YAHS.out.jbat, Channel.value(file(params.juicer_jar, checkIfExists: true)))
+            if (!params.skip_pretext) ch_contact = PRETEXTSNAPSHOT(PRETEXTMAP(YAHS.out.pairs))
+        }
+
+        // ---------------------------------------------------------------- evaluation
+        ch_contigs = ch_ctg.map { n, fa, _fai -> [n, fa] }
+        ASM_STATS(ch_contigs.mix(ch_scaf))
+        ch_telo = ASM_STATS.out[1].flatten().filter { it.name.endsWith('.telo.tsv') }
+        ch_gaps = ASM_STATS.out[1].flatten().filter { it.name.endsWith('.gaps.bed') }
+
+        // compleasm + merqury on contigs only: scaffolds carry the same sequence
+        ch_busco = Channel.empty()
+        if (!params.skip_busco) {
+            ch_lin = params.lineage_dir ? Channel.value(file(params.lineage_dir, checkIfExists: true)) : COMPLEASM_DOWNLOAD()
+            ch_busco = COMPLEASM(ch_contigs.filter { n, _fa -> !n.endsWith('a_ctg') }, ch_lin).summary
+        }
+
+        ch_merq = Channel.empty()
+        ch_merq_files = Channel.empty()
+        if (!params.skip_merqury && (params.meryl_db || params.hifi)) {     // merqury needs HiFi reads or a meryl DB
+            ch_db = params.meryl_db ? Channel.value(file(params.meryl_db, checkIfExists: true)) : MERYL_COUNT(ch_hifi)
+            ch_sets = ch_contigs
+                .filter { n, _fa -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
+                .toSortedList { a, b -> a[0] <=> b[0] }
+                .filter { it.size() == 2 }
+                .map { l -> ['haps', l.collect { it[1] }] }
+                .mix(ch_contigs.filter { n, _fa -> n.endsWith(".${mode}.p_ctg") }.map { _n, fa -> ['primary', [fa]] })
+            MERQURY(ch_sets, ch_db)
+            ch_merq = MERQURY.out.tables
+            ch_merq_files = MERQURY.out.files
+        }
+
+        // ONT reads on hap1 / hap2: scaffolds with CiFi, contigs otherwise (--map_ont)
+        ch_ont_cov = Channel.empty()
+        if (params.map_ont && params.ont) {
+            def ch_targets = (params.cifi ? ch_scaf : ch_contigs)
+                .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
+            ch_ont_cov = MAP_ONT(ch_targets, ch_ont).stats
+        } else if (params.map_ont) {
+            log.warn "--map_ont without --ont: no ONT reads to map"
+        }
+
+        // dot plots: hap2 vs hap1 (contigs, scaffolds) and, with --ref, every assembly vs the reference
+        ch_dot = Channel.empty()
+        if (!params.skip_dotplot) {
+            def ch_asm = ch_contigs.mix(ch_scaf)
+            def h1 = ch_asm.filter { n, _fa -> n.contains(".${mode}.hap1.") }.map { n, fa -> [n.replace('.hap1.', '.hapN.'), n, fa] }
+            def h2 = ch_asm.filter { n, _fa -> n.contains(".${mode}.hap2.") }.map { n, fa -> [n.replace('.hap2.', '.hapN.'), n, fa] }
+            ch_pairs = h2.join(h1).map { _k, n2, fa2, n1, fa1 -> [n2.replace('.hap2.', '.hap2_vs_hap1.'), n2, fa2, n1, fa1] }
+            if (params.ref) {
+                def ref = file(params.ref, checkIfExists: true)
+                def refName = ref.name.replaceAll(/\.(fa|fasta|fna)(\.gz)?$/, '')
+                ch_pairs = ch_pairs.mix(ch_asm.filter { n, _fa -> !n.endsWith('a_ctg') }
+                                              .map { n, fa -> ["${n}_vs_${refName}", n, fa, refName, ref] })
+            }
+            ch_dot = DOTPLOT(DOTPLOT_ALIGN(ch_pairs))
+        }
+
+        SUMMARY(
+            ASM_STATS.out.stats.collect(),
+            ch_busco.collect().ifEmpty([]),
+            ch_merq.flatten().collect().ifEmpty([])
+        )
+
+        REPORT(
+            ch_ctg.flatMap { _n, fa, fai -> [fa, fai] }.mix(ch_scaf.map { _n, fa -> fa }).collect(),
+            ASM_STATS.out.stats.mix(ch_gaps).collect(),
+            ch_telo.collect(),
+            ch_busco.collect().ifEmpty([]),
+            // only per-set files (haps.*, primary.*): every set also writes the same-named <db>.hist
+            ch_merq_files.flatten().filter { f -> f.name ==~ /^(haps|primary)\..*/ }.collect().ifEmpty([]),
+            ch_dot.flatten().collect().ifEmpty([]),
+            ch_contact.flatten().collect().ifEmpty([]),
+            ch_readsqc.collect().ifEmpty([]),
+            ch_cifi_stats.flatten().collect().ifEmpty([]),
+            ch_markdup.collect().ifEmpty([]),
+            ch_ont_cov.flatten().collect().ifEmpty([]),
+            // plain String: a GString input cannot be serialized for -resume
+            "${workflow.commandLine}\n# nxf-cifi ${workflow.revision ?: ''} ${workflow.commitId ?: ''} · Nextflow ${nextflow.version} · ${workflow.start}".toString()
+        )
     }
-
-    SUMMARY(
-        ASM_STATS.out.stats.collect(),
-        ch_busco.collect().ifEmpty([]),
-        ch_merq.flatten().collect().ifEmpty([])
-    )
-
-    REPORT(
-        ch_ctg.flatMap { _n, fa, fai -> [fa, fai] }.mix(ch_scaf.map { _n, fa -> fa }).collect(),
-        ASM_STATS.out.stats.mix(ch_gaps).collect(),
-        ch_telo.collect(),
-        ch_busco.collect().ifEmpty([]),
-        // only per-set files (haps.*, primary.*): every set also writes the same-named <db>.hist
-        ch_merq_files.flatten().filter { f -> f.name ==~ /^(haps|primary)\..*/ }.collect().ifEmpty([]),
-        ch_dot.flatten().collect().ifEmpty([]),
-        ch_contact.flatten().collect().ifEmpty([]),
-        ch_readsqc.collect().ifEmpty([]),
-        ch_cifi_stats.flatten().collect().ifEmpty([]),
-        ch_markdup.collect().ifEmpty([]),
-        ch_ont_cov.flatten().collect().ifEmpty([]),
-        // plain String: a GString input cannot be serialized for -resume
-        "${workflow.commandLine}\n# nxf-cifi ${workflow.revision ?: ''} ${workflow.commitId ?: ''} · Nextflow ${nextflow.version} · ${workflow.start}".toString()
-    )
 }

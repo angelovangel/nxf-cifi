@@ -25,9 +25,13 @@ nextflow run nxf-cifi --hifi hifi.bam --prefix myplant --outdir asm_hifi
 # HiFi + ONT UL
 nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --prefix myplant --outdir asm_noCiFi
 
-# HiFi + ONT UL + CiFi (phasing + scaffolding)
+# HiFi + ONT UL + CiFi (phasing + scaffolding); reuse the HiFi k-mer DB of the first run (it is not
+# published, it stays in work/): MERYL_DB=$(find work -type d -name 'hifi.k21.meryl' | head -1)
 nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --cifi cifi.bam --enzyme HindIII \
-    --prefix myplant --outdir asm_CiFi --meryl_db asm_noCiFi/eval/merqury/hifi.k21.meryl
+    --prefix myplant --outdir asm_CiFi --meryl_db $MERYL_DB
+
+# CiFi library QC only (no assembly): reads QC, PCR duplicates, cifi qc, digest report
+nextflow run nxf-cifi --cifi cifi.bam --enzyme HindIII --prefix myplant --outdir cifi_qc
 ```
 
 With `--cifi`, each scaffolded haplotype also gets a CiFi contact analysis, modelled on McGinty et al. (Dennis lab,
@@ -68,7 +72,7 @@ followed by the usual evaluation (stats, telomeres, BUSCO, dot plots) and the re
 ```bash
 nextflow run nxf-cifi --assembly asm_noCiFi/fasta/myplant.bp.hap1.p_ctg.fa,asm_noCiFi/fasta/myplant.bp.hap2.p_ctg.fa \
     --cifi cifi.bam --enzyme HindIII --prefix myplant --outdir asm_CiFiScaf \
-    --meryl_db asm_noCiFi/eval/merqury/hifi.k21.meryl
+    --meryl_db $MERYL_DB
 ```
 
 - One or two FASTAs (.gz ok), in hap1, hap2 order. They are renamed `<prefix>.asm.hap1.p_ctg` / `hap2`, so outputs,
@@ -89,14 +93,14 @@ Options are defined in `nextflow_schema.json` and checked at start by the nf-sch
 ```
 report/report.html                reads, assemblies, Nx + metric plots, k-mer spectra, dot plots, CiFi, ONT coverage; command used
 summary.tsv                       per assembly: contiguity, telomeres, BUSCO, QV, k-mer completeness
-reads/                            reads.faster-report.html: one report for all reads (+ merged CiFi BAM); reads.stats.tsv (faster --table)
-cifi/qc  cifi/digest              cifi qc report, digest report, segments, R1/R2
+reads/                            reads.faster-report.html: one report for all reads; reads.stats.tsv (faster --table)
+cifi/qc  cifi/digest              cifi qc report, digest report (segments and R1/R2 FASTQs are not published)
 cifi/markdup                      pbmarkdup duplicate summary (<prefix>.cifi.markdup.tsv) + log
 cifi/contacts                     cifi contacts report + stats per haplotype
 cifi/stats                        <hap>.cifi_stats.{tsv,json,png}, <hap>.cifi_scaffolds.tsv (contact analysis)
 hifiasm/                          contig GFAs + hifiasm log
 fasta/                            contigs (+ .fai) and <hap>.scaffolds.fa
-scaffolds/<hap>/                  yahs output, <hap>_JBAT.* (Juicebox), .hic, .pretext + snapshot PNGs
+scaffolds/<hap>/                  yahs output (scaffold FASTA is in fasta/), <hap>_JBAT.* (Juicebox), .hic, .pretext + snapshot PNGs
 eval/{stats,telomeres,compleasm,merqury}
 dotplots/                         <query>_vs_<target>.dotplot.{png,json,tsv} (+ .paf.gz); tsv = % of each side aligned, inverted bp
 pipeline_info/                    timeline, resource report, trace; command.txt (nextflow command line)
