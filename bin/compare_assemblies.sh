@@ -576,6 +576,25 @@ if spectra:
                  '<p class="note">Read k-mers by copy number in the assembly (spectra-cn) and by haplotype (spectra-asm).</p>'
                  + "".join(spectra) + "</section>")
 
+# scaffold layout per haplotype: YaHS AGP (contigs, orientation, gaps) + telomere ends of the scaffolds
+def read_agp(fn):
+    rows, idx = [], {}
+    for line in open(fn):
+        f = line.rstrip("\n").split("\t")
+        if line.startswith("#") or len(f) < 9: continue
+        s, b, e = f[0], int(f[1]) - 1, int(f[2])
+        if s not in idx: idx[s] = len(rows); rows.append([s, 0, [], [], 0, 0])   # name, length, contigs, gaps, telo
+        r = rows[idx[s]]; r[1] = max(r[1], e)
+        if f[4] in ("N", "U"): r[3].append([b, e])
+        else: r[2].append([f[5], b, e, f[8], int(f[6]) - 1, int(f[7])])        # contig, start, end, orient, cstart, cend
+    return rows, idx
+def agp_of(run, label):
+    """contigs of a scaffolded assembly by scaffold: {scaffold: [[start, end, contig, orient], ...]}"""
+    if not label.endswith(".scaffolds"): return None
+    fn = [f for f in run["agp"] if os.path.basename(f) == label[:-len(".scaffolds")] + ".yahs_scaffolds_final.agp"]
+    if not fn: return None
+    return {r[0]: [[c[1], c[2], c[0], c[3]] for c in r[2]] for r in read_agp(fn[0])[0]}
+
 dots = []
 for run in RUNS:
     if not run["dotplots"]: continue
@@ -594,6 +613,9 @@ for run in RUNS:
             except ValueError: d = None
         if d and d.get("tseq") is not None:
             key = f"dp{len(DATA['dp'])}"
+            for ax, seqs in (("tctg", d["tseq"]), ("qctg", d["qseq"])):   # contig strips along the axes
+                a = agp_of(run, d.get(ax[0], ""))
+                if a: d[ax] = [a.get(q[0], []) for q in seqs]
             DATA["dp"][key] = d
             figs.append(f'<figure class="dpfig"><div class="dp" data-key="{key}"></div><figcaption>{cap}</figcaption></figure>')
         elif os.path.getsize(png):
@@ -603,20 +625,9 @@ for run in RUNS:
 if dots:
     parts.append('<section id="dotplots"><h2>Dot plots</h2><p class="note">Hover to highlight the target and query sequences '
                  'under the cursor; near an alignment, all alignments of that query–target pair and a summary of them; drag to zoom, double-click to reset. Blue same orientation, red inverted. Query sequences are ordered along the '
-                 'target and flipped (−) where most of them align reversed.</p>' + "".join(dots) + "</section>")
+                 'target and flipped (−) where most of them align reversed. Scaffold plots have a contig strip on each axis '
+                 '(YaHS AGP; alternating shades, a break = contig join); hover it to highlight that contig.</p>' + "".join(dots) + "</section>")
 
-# scaffold layout per haplotype: YaHS AGP (contigs, orientation, gaps) + telomere ends of the scaffolds
-def read_agp(fn):
-    rows, idx = [], {}
-    for line in open(fn):
-        f = line.rstrip("\n").split("\t")
-        if line.startswith("#") or len(f) < 9: continue
-        s, b, e = f[0], int(f[1]) - 1, int(f[2])
-        if s not in idx: idx[s] = len(rows); rows.append([s, 0, [], [], 0, 0])   # name, length, contigs, gaps, telo
-        r = rows[idx[s]]; r[1] = max(r[1], e)
-        if f[4] in ("N", "U"): r[3].append([b, e])
-        else: r[2].append([f[5], b, e, f[8], int(f[6]) - 1, int(f[7])])        # contig, start, end, orient, cstart, cend
-    return rows, idx
 scafs = []
 for run in RUNS:
     figs = []
@@ -1045,6 +1056,14 @@ function dotplot(host, d) {
   const ML = 62, MR = 96, MT = 76, MB = 44;
   let full = {x0: 0, x1: tTot, y0: 0, y1: qTot}, view = {...full}, size = 0, dpr = 1, hover = null, drag = null;
   let hl = null;                                     // {t, q}: target / query sequence under the cursor
+  // contigs of scaffolded assemblies (YaHS AGP), in plot coordinates: strips along the top and right edges
+  const SW = 6, ctgs = (seqs, cs, isQ) => !cs ? null : seqs.flatMap((q, i) => (cs[i] || []).map((c, k) => {
+    const [b, e] = isQ && q[3] === 1 ? [q[2] - c[1], q[2] - c[0]] : [c[0], c[1]];
+    return {a: q[1] + b, b: q[1] + e, name: c[2], o: c[3], k, n: cs[i].length, seq: q};
+  }));
+  const TC = ctgs(T, d.tctg, false), QC = ctgs(Q, d.qctg, true);
+  let hc = null;                                     // contig under the cursor on a strip
+  const TL = TC ? SW + 4 : 0, QL = QC ? SW + 4 : 0;  // label offsets past the strips
   const pw = () => size - ML - MR, ph = () => size - MT - MB;
   const X = x => ML + (x - view.x0) / (view.x1 - view.x0) * pw(), Y = y => MT + ph() - (y - view.y0) / (view.y1 - view.y0) * ph();
   const iX = px => view.x0 + (px - ML) / pw() * (view.x1 - view.x0), iY = py => view.y0 + (MT + ph() - py) / ph() * (view.y1 - view.y0);
@@ -1064,6 +1083,11 @@ function dotplot(host, d) {
     T.forEach(t => { const x = Math.round(X(t[1])) + .5; c.moveTo(x, MT); c.lineTo(x, MT + ph()); });
     Q.forEach(q => { const y = Math.round(Y(q[1])) + .5; c.moveTo(ML, y); c.lineTo(ML + pw(), y); });
     c.stroke();
+    if (hc) {                                          // contig hovered on a strip: its span across the plot
+      c.fillStyle = 'rgba(63,120,181,.12)';
+      if (hc.ax === 't') c.fillRect(X(hc.a), MT, X(hc.b) - X(hc.a), ph());
+      else c.fillRect(ML, Y(hc.b), pw(), Y(hc.a) - Y(hc.b));
+    }
     c.lineWidth = 1.5; c.lineCap = 'round';
     for (const fwd of [true, false]) {
       c.strokeStyle = fwd ? '#1f5fa8' : '#c8413b'; c.beginPath();
@@ -1077,6 +1101,21 @@ function dotplot(host, d) {
     }
     c.restore();
     c.strokeStyle = '#b9bdc2'; c.lineWidth = 1; c.strokeRect(ML + .5, MT + .5, pw(), ph());
+    // contig strips: neighbouring contigs of a scaffold alternate dark / light blue, hovered one orange
+    const strip = (cs, ax) => {
+      if (!cs) return;
+      for (const g of cs) {
+        c.fillStyle = hc && hc.g === g ? '#e8a13a' : g.k % 2 ? '#9cc3e6' : '#3f78b5';
+        if (ax === 't') {
+          const a = Math.max(X(g.a), ML), b = Math.min(X(g.b), ML + pw());
+          if (b > a) c.fillRect(a, MT - SW - 2, Math.max(b - a - (b - a > 3 ? 1 : 0), .5), SW);   // 1 px gap = join
+        } else {
+          const a = Math.min(Y(g.a), MT + ph()), b = Math.max(Y(g.b), MT);
+          if (a > b) c.fillRect(ML + pw() + 2, b, SW, Math.max(a - b - (a - b > 3 ? 1 : 0), .5));
+        }
+      }
+    };
+    strip(TC, 't'); strip(QC, 'q');
     c.fillStyle = '#6b7078'; c.font = '11px -apple-system, Segoe UI, Roboto, sans-serif';
     const tk = (a, b) => { const st = niceTicks(a / 1e6, b / 1e6, 5); return st.map(t => [t, short(t)]); };
     c.textAlign = 'center';
@@ -1091,7 +1130,7 @@ function dotplot(host, d) {
       const a = Math.max(X(t[1]), ML), b = Math.min(X(t[1] + t[2]), ML + pw());
       if (b - a < 11 && !(hl && hl.t === t)) return;
       const on = hl && hl.t === t;
-      c.save(); c.translate((a + b) / 2 + 3, MT - 5); c.rotate(-Math.PI / 2); c.textAlign = 'left';
+      c.save(); c.translate((a + b) / 2 + 3, MT - 5 - TL); c.rotate(-Math.PI / 2); c.textAlign = 'left';
       c.font = (on ? 'bold ' : '') + '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = on ? '#9a5a00' : '#4a4f56';
       c.fillText(trunc(t[0], 12), 0, 0); c.restore();
     });
@@ -1101,7 +1140,7 @@ function dotplot(host, d) {
       if (a - b < 11 && !(hl && hl.q === q)) return;
       const on = hl && hl.q === q;
       c.font = (on ? 'bold ' : '') + '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = on ? '#9a5a00' : '#4a4f56';
-      c.fillText(trunc(q[0], 13) + (q[3] ? ' (−)' : ''), ML + pw() + 5, (a + b) / 2 + 3);
+      c.fillText(trunc(q[0], 13) + (q[3] ? ' (−)' : ''), ML + pw() + 5 + QL, (a + b) / 2 + 3);
     });
   }
   function layout() {
@@ -1130,6 +1169,19 @@ function dotplot(host, d) {
       Object.assign(sel.style, {display: 'block', left: x + 'px', top: y + 'px', width: Math.abs(px - drag[0]) + 'px', height: Math.abs(py - drag[1]) + 'px'});
       hideTip(); return;
     }
+    // on a contig strip: that contig
+    const onT = TC && px >= ML && px <= ML + pw() && py >= MT - SW - 3 && py < MT;
+    const onQ = QC && py >= MT && py <= MT + ph() && px > ML + pw() && px <= ML + pw() + SW + 3;
+    if (onT || onQ) {
+      const v = onT ? iX(px) : iY(py), g = (onT ? TC : QC).find(g => g.a <= v && v < g.b);
+      const nh = g ? {g, ax: onT ? 't' : 'q', a: g.a, b: g.b} : null;
+      if ((nh && nh.g) !== (hc && hc.g) || hover || hl) { hc = nh; hover = hl = null; draw(); }
+      if (g) showTip(`<b>${escH(g.name)}</b> (${g.o === '-' ? 'reversed' : 'forward'}) ${flen(g.b - g.a)}<br>` +
+                     `${escH(g.seq[0])}: contig ${g.k + 1} of ${g.n}`, ev);
+      else hideTip();
+      return;
+    }
+    if (hc) { hc = null; draw(); }
     if (!inside(px, py)) { if (hover || hl) { hover = hl = null; draw(); } hideTip(); return; }
     const h = nearest(px, py);
     const nt = h ? T[h.s[0]] : find(T, iX(px)), nq = h ? Q[h.s[1]] : find(Q, iY(py));
@@ -1150,10 +1202,12 @@ function dotplot(host, d) {
     } else {
       const x = iX(px), y = iY(py), t = find(T, x), q = find(Q, y);
       const qp = q[3] ? q[2] - (y - q[1]) : y - q[1];
-      showTip(`<span style="color:#888">${escH(d.t)}</span> ${escH(t[0])}: ${flen(x - t[1])}<br><span style="color:#888">${escH(d.q)}</span> ${escH(q[0])}${q[3] ? ' (−)' : ''}: ${flen(qp)}`, ev);
+      const ct = TC && TC.find(g => g.a <= x && x < g.b), cq = QC && QC.find(g => g.a <= y && y < g.b);
+      showTip(`<span style="color:#888">${escH(d.t)}</span> ${escH(t[0])}: ${flen(x - t[1])}${ct ? ` · ${escH(ct.name)}` : ''}<br>` +
+              `<span style="color:#888">${escH(d.q)}</span> ${escH(q[0])}${q[3] ? ' (−)' : ''}: ${flen(qp)}${cq ? ` · ${escH(cq.name)}` : ''}`, ev);
     }
   });
-  cv.addEventListener('mouseleave', () => { hideTip(); if (hover || hl) { hover = hl = null; draw(); } });
+  cv.addEventListener('mouseleave', () => { hideTip(); if (hover || hl || hc) { hover = hl = hc = null; draw(); } });
   cv.addEventListener('mousedown', ev => { const p = pos(ev); if (inside(...p)) { drag = p; ev.preventDefault(); } });
   window.addEventListener('mouseup', ev => {
     if (!drag) return;
