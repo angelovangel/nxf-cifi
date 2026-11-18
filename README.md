@@ -85,9 +85,7 @@ Inputs can be comma-separated lists or quoted globs (`--hifi 'reads/*.bam'`).
 Set `--max_cpus` / `--max_memory` to the machine size; hifiasm gets the full amount and the other steps are capped at it.
 Add `-resume` to continue a run, `-profile singularity,slurm` on a cluster.
 Run `nextflow run nxf-cifi --help` for all options (`--help <param>` for one, `--showHidden` for the advanced ones).
-Options are defined in `nextflow_schema.json` and checked at start by the nf-schema plugin (Nextflow ≥ 25.04);
-`--monochrome_logs` turns colours off. The defaults match `run_hifiasm.sh`.
-
+Options are defined in `nextflow_schema.json` and checked at start by the nf-schema plugin (Nextflow ≥ 25.04).
 ## Output
 
 ```
