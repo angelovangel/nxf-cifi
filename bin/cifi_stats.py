@@ -18,11 +18,16 @@ pairs are the extra, multi-way contacts that long reads add.
 
 writes NAME.cifi_stats.tsv (summary row), NAME.cifi_scaffolds.tsv (per chromosome-scale scaffold),
        NAME.cifi_stats.json (summary + curves for the html report), NAME.cifi_stats.png
+The json also holds the analysed contacts as a multi-resolution, genome-wide contact matrix (scaffolds in
+AGP order) for the interactive contact map of the report: per level the upper triangle, counts log-scaled
+to 0-255, gzip + base64. Levels are kept from the coarsest up while they fit HIC_BUDGET compressed bytes.
 """
+import base64
 import gzip
 import json
 import math
 import sys
+from array import array
 from bisect import bisect_right
 
 name, seg_tsv, agp_file = sys.argv[1:4]
@@ -32,9 +37,11 @@ MAPQ_LEVELS = [1, 10, 20, 30, 60]
 RANGES = [(0, 1e3, "<1 kb"), (1e3, 1e4, "1-10 kb"), (1e4, 1e5, "10-100 kb"), (1e5, 1e6, "0.1-1 Mb"),
           (1e6, float("inf"), ">=1 Mb")]
 PS_PER_DECADE, PS_MIN = 8, 100          # distance-decay bins: 8 per decade from 100 bp
+HIC_MAX_BINS, HIC_MIN_BP = 8192, 5000   # finest contact-map level: <= 8192 bins and >= 5 kb per bin
+HIC_MIN_BINS, HIC_BUDGET = 256, 6_000_000   # coarsest level; compressed bytes for all levels together
 
 # ------------------------------------------------------------------ AGP: contig -> scaffold coordinates
-agp, scaf_len, order = {}, {}, []
+agp, scaf_len, order, agp_ctg = {}, {}, [], []      # agp_ctg: (scaffold, start, end, contig, orient)
 with open(agp_file) as fh:
     for line in fh:
         if line.startswith("#"):
@@ -49,6 +56,7 @@ with open(agp_file) as fh:
         if f[4] in ("N", "U"):
             continue
         agp.setdefault(f[5], []).append((int(f[6]), int(f[7]), obj, obeg, f[8]))
+        agp_ctg.append((obj, obeg, oend, f[5], f[8]))
 for v in agp.values():
     v.sort()
 agp_starts = {c: [x[0] for x in v] for c, v in agp.items()}
@@ -68,6 +76,13 @@ def lift(ctg, p):
 
 
 big = {s for s, L in scaf_len.items() if L >= min_scaf}
+offset, genome = {}, 0                       # scaffolds concatenated in AGP order (contact map axes)
+for s in order:
+    offset[s] = genome
+    genome += scaf_len[s]
+hic_bp = max(HIC_MIN_BP, -(-genome // HIC_MAX_BINS))       # finest contact-map bin
+hic_n = -(-genome // hic_bp)
+hic_i, hic_j = array("I"), array("I")                     # finest bins of every analysed pair, i <= j
 big_order = sorted(big, key=lambda s: -scaf_len[s])
 
 # ------------------------------------------------------------------ counters
@@ -110,9 +125,15 @@ def flush(segs):
     segs.sort()
     for i in range(k):
         _, si, pi = segs[i]
+        bi = (offset[si] + pi) // hic_bp
         for j in range(i + 1, k):
             _, sj, pj = segs[j]
             pairs += 1
+            bj = (offset[sj] + pj) // hic_bp
+            if bi <= bj:
+                hic_i.append(bi); hic_j.append(bj)
+            else:
+                hic_i.append(bj); hic_j.append(bi)
             a = j == i + 1
             if si == sj:
                 cis += 1
@@ -249,6 +270,40 @@ with open(f"{name}.cifi_scaffolds.tsv", "w") as out:
     for r in scaf_rows:
         out.write("\t".join("NA" if v is None else str(v) for v in r) + "\n")
 
+
+
+def contact_map():
+    """multi-resolution contact matrix for the report (see module doc); None without contacts"""
+    import numpy as np
+    if not len(hic_i):
+        return None
+    m = np.bincount(np.frombuffer(hic_i, dtype=np.uint32).astype(np.int64) * hic_n
+                    + np.frombuffer(hic_j, dtype=np.uint32), minlength=hic_n * hic_n).reshape(hic_n, hic_n)
+    levels, bp = [], hic_bp
+    while True:
+        levels.append((bp, m))
+        if m.shape[0] <= HIC_MIN_BINS:
+            break
+        n = m.shape[0] + m.shape[0] % 2                       # 2 x 2 pooling (upper triangle stays upper)
+        m = np.pad(m, ((0, n - m.shape[0]), (0, n - m.shape[0]))).reshape(n // 2, 2, n // 2, 2).sum(axis=(1, 3))
+        bp *= 2
+    out, used = [], 0
+    for bp, m in reversed(levels):                            # coarsest first, finer while within budget
+        n = m.shape[0]
+        t = m[np.triu_indices(n)]
+        vmax = int(t.max())
+        q = np.rint(np.log1p(t) * (255 / np.log1p(vmax))).astype(np.uint8) if vmax else t.astype(np.uint8)
+        z = gzip.compress(q.tobytes(), 6)
+        if out and used + len(z) > HIC_BUDGET:
+            break
+        used += len(z)
+        out.append({"n": n, "bp": bp, "vmax": vmax, "data": base64.b64encode(z).decode()})
+    return {"genome": genome, "pairs": len(hic_i), "min_mapq": min_q,
+            "scaffolds": [[s, offset[s], scaf_len[s]] for s in order],
+            "contigs": sorted([c, offset[s] + b - 1, e - b + 1, o] for s, b, e, c, o in agp_ctg if s in offset),
+            "levels": out}
+
+
 cmax = max(card, default=0)
 json.dump({
     "summary": summary,
@@ -261,6 +316,7 @@ json.dump({
     "pair_reads": pair_reads,
     "max_pairs": max_pairs,
     "min_scaf": min_scaf,
+    "hic": contact_map(),
 }, open(f"{name}.cifi_stats.json", "w"), separators=(",", ":"))
 
 # ------------------------------------------------------------------ overview figure

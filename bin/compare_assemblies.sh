@@ -381,7 +381,7 @@ def nx_points(ls):
     pts.append([100.0, ls[-1], len(ls)])
     return pts
 
-DATA = {"rows": [], "nx": {}, "dp": {}}
+DATA = {"rows": [], "nx": {}, "dp": {}, "hic": {}}
 for r in rows:
     m = re.search(r"_(hap[12]|primary)$", r[0])
     DATA["rows"].append({"label": r[0], "group": grp(r[0]), "color": gcol[grp(r[0])], "hap": m[1] if m else "",
@@ -628,7 +628,16 @@ for run in RUNS:
         name = d["label"] if d else f'{run["label"]}_{h}' if h else run["label"]
         sec.append(f'<h3>{esc(name)}</h3>')
         hm = [p for p in maps if hap_of(p) == h]
-        if hm: sec.append('<div class="grid">' + "".join(
+        hic = d.get("hic") if d else None
+        if hic and hic.get("levels"):
+            key = f"hic{len(DATA['hic'])}"
+            DATA["hic"][key] = hic
+            sec.append(f'<figure class="hicfig"><div class="hic" data-key="{key}"></div><figcaption>{esc(name)}: '
+                       f'CiFi contacts (segment MAPQ ≥ {hic.get("min_mapq", 0)}) on the YaHS scaffolds, '
+                       f'{hic["pairs"]:,} contacts</figcaption></figure>')
+            if hm: sec.append('<details><summary>PretextSnapshot image</summary><div class="grid">' + "".join(
+                fig(p, esc(os.path.basename(p))) for p in hm) + "</div></details>")
+        elif hm: sec.append('<div class="grid">' + "".join(
             fig(p, "contact map (PretextSnapshot): " + esc(os.path.basename(p))) for p in hm) + "</div>")
         if d and os.path.exists(d["png"]) and os.path.getsize(d["png"]):   # multi-panel figure: full width
             sec.append(fig(d["png"], f'{esc(d["label"])}: segments per read, P(s), MAPQ and contact classes, coverage'))
@@ -649,7 +658,8 @@ for run in RUNS:
 HAS_CIFI = bool(lib or CIFI_SUMMARY or per_hap)
 if HAS_CIFI:
     parts.append('<section id="cifi"><h2>CiFi</h2><p class="note">Library QC, contact statistics of all haplotypes, '
-                 'then per haplotype: contact map of the YaHS scaffolds, contact analysis and per-scaffold contacts.</p>'
+                 'then per haplotype: contact map of the YaHS scaffolds (solid lines scaffolds, dashed lines contigs; scroll to zoom, drag to pan, double-click '
+                 'to reset; finer bins load as you zoom), contact analysis and per-scaffold contacts.</p>'
                  + ('<h3>Library</h3>' + "".join(lib) if lib else "")
                  + CIFI_SUMMARY
                  + "".join(per_hap)
@@ -767,6 +777,11 @@ svg .n50 { stroke:#c9ccd0; stroke-dasharray:4 4 }
 .legend span.off { opacity:.35; text-decoration:line-through }
 .legend svg { width:26px; height:10px }
 .dp { position:relative; width:100% }
+.hicfig { max-width:820px }
+.hic { position:relative; width:100% }
+.hic canvas { display:block; cursor:grab; max-width:100%; touch-action:none } .hic canvas.drag { cursor:grabbing }
+.hic .reset { position:absolute; top:4px; left:4px; font:12px inherit; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer; display:none }
+.hic .res { position:absolute; top:6px; right:8px; font-size:11px; color:var(--muted) }
 .dp canvas { display:block; cursor:crosshair; max-width:100% }
 .dp .sel { position:absolute; border:1px solid var(--accent); background:rgba(31,95,168,.10); display:none; pointer-events:none }
 .dp .reset { position:absolute; top:4px; left:4px; font:12px inherit; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer; display:none }
@@ -1117,6 +1132,136 @@ function dotplot(host, d) {
     (d.min_seq ? `; sequences < ${flen(d.min_seq)} not drawn` : ''));
 }
 
+/* ---------------------------------------------------------------- interactive contact map (HiGlass-like) */
+// h: {genome, pairs, scaffolds: [[name, offset, len]], levels: [{n, bp, vmax, data}]} from cifi_stats.py;
+// data = gzip + base64 of the upper triangle, log-scaled counts 0-255. Levels are decoded when first needed.
+function hicLevel(L) {
+  if (!L.p) L.p = (async () => {
+    const raw = Uint8Array.from(atob(L.data), c => c.charCodeAt(0));
+    const t = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    const n = L.n, sq = new Uint8Array(n * n), hist = new Uint32Array(256);
+    for (let i = 0, k = 0; i < n; i++) for (let j = i; j < n; j++, k++) { const v = t[k]; sq[i * n + j] = v; sq[j * n + i] = v; hist[v]++; }
+    let nz = t.length - hist[0], c = 0, hi = 255;                    // colour scale: 99.5th percentile of non-zero bins
+    for (let v = 255; v > 0; v--) { c += hist[v]; if (c >= nz * 0.005) { hi = v; break; } }
+    L.hi = Math.max(hi, 1); L.sq = sq;
+  })();
+  return L.p;
+}
+function hicMap(host, h) {
+  const G = h.genome, SC = h.scaffolds, LV = h.levels;               // LV: coarse -> fine
+  const CT = (h.contigs || []).slice().sort((a, b) => a[1] - b[1]);  // [name, genome offset, length, orient]
+  const cv = document.createElement('canvas'), btn = document.createElement('button'), res = document.createElement('div');
+  btn.className = 'reset'; btn.textContent = 'reset zoom'; res.className = 'res';
+  host.append(cv, btn, res);
+  if (typeof DecompressionStream === 'undefined') { host.innerHTML = '<p class="note">this browser cannot decompress the contact map; see the PretextSnapshot image</p>'; return; }
+  const ML = 14, MR = 104, MT = 84, MB = 14;
+  let view = {x0: 0, y0: 0, s: G}, size = 0, dpr = 1, drag = null, moved = false;
+  const pw = () => size - ML - MR;
+  const X = x => ML + (x - view.x0) / view.s * pw(), Y = y => MT + (y - view.y0) / view.s * pw();
+  const iX = px => view.x0 + (px - ML) / pw() * view.s, iY = py => view.y0 + (py - MT) / pw() * view.s;
+  const at = (A, g) => { let lo = 0, hi = A.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (A[m][1] <= g) lo = m; else hi = m - 1; } return A[lo]; };
+  const scafAt = g => at(SC, g);
+  const ctgAt = g => { if (!CT.length) return null; const c = at(CT, g); return g < c[1] + c[2] ? c : null; };   // null in a gap
+  // coarsest level with bins no larger than ~1.5 px (LV is coarse -> fine); the finest when zoomed in further
+  const level = () => { const want = view.s / pw(); return LV.find(l => l.bp <= want * 1.5) || LV[LV.length - 1]; };
+  const off = document.createElement('canvas');
+  function draw() {
+    const L = level(), have = L.sq ? L : [...LV].reverse().find(l => l.bp >= L.bp && l.sq);
+    if (!L.sq) hicLevel(L).then(draw);
+    const c = cv.getContext('2d'), P = Math.round(pw() * dpr);
+    c.setTransform(1, 0, 0, 1, 0, 0); c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+    if (have) {
+      off.width = off.height = P;
+      const oc = off.getContext('2d'), img = oc.createImageData(P, P), px = img.data, n = have.n, sq = have.sq, hi = have.hi;
+      const bins = new Int32Array(P);
+      for (let k = 0; k < P; k++) { const g = view.x0 + (k + .5) / P * view.s; bins[k] = g < 0 || g >= G ? -1 : Math.min(n - 1, Math.floor(g / have.bp)); }
+      const rows = new Int32Array(P);
+      for (let k = 0; k < P; k++) { const g = view.y0 + (k + .5) / P * view.s; rows[k] = g < 0 || g >= G ? -1 : Math.min(n - 1, Math.floor(g / have.bp)); }
+      for (let r = 0, o = 0; r < P; r++) {
+        const bi = rows[r];
+        for (let k = 0; k < P; k++, o += 4) {
+          const bj = bins[k];
+          if (bi < 0 || bj < 0) { px[o] = px[o + 1] = px[o + 2] = 247; px[o + 3] = 255; continue; }
+          const f = Math.min(1, sq[bi * n + bj] / hi), w = Math.round(255 * (1 - f));
+          px[o] = 255 - Math.round(f * 40); px[o + 1] = w; px[o + 2] = w; px[o + 3] = 255;    // white -> red
+        }
+      }
+      oc.putImageData(img, 0, 0);
+      c.imageSmoothingEnabled = false; c.drawImage(off, ML * dpr, MT * dpr);
+    }
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.save(); c.beginPath(); c.rect(ML, MT, pw(), pw()); c.clip();
+    // contig boundaries inside scaffolds (dashed), drawn where neighbouring boundaries are >= 3 px apart
+    const sStart = new Set(SC.map(x => x[1]));
+    c.strokeStyle = 'rgba(30,60,110,.30)'; c.lineWidth = 1; c.setLineDash([3, 3]); c.beginPath();
+    let last = -1e9;
+    for (const [, o] of CT) {
+      if (sStart.has(o)) continue;
+      const x = X(o); if (x < ML || x > ML + pw() || x - last < 3) continue; last = x;
+      const xr = Math.round(x) + .5, yr = Math.round(Y(o)) + .5;
+      c.moveTo(xr, MT); c.lineTo(xr, MT + pw()); c.moveTo(ML, yr); c.lineTo(ML + pw(), yr);
+    }
+    c.stroke(); c.setLineDash([]);
+    c.strokeStyle = 'rgba(30,60,110,.45)'; c.lineWidth = 1; c.beginPath();
+    for (const [, o] of SC) { const x = Math.round(X(o)) + .5, y = Math.round(Y(o)) + .5; c.moveTo(x, MT); c.lineTo(x, MT + pw()); c.moveTo(ML, y); c.lineTo(ML + pw(), y); }
+    c.stroke(); c.restore();
+    c.strokeStyle = '#b9bdc2'; c.strokeRect(ML + .5, MT + .5, pw(), pw());
+    c.font = '10px -apple-system, Segoe UI, Roboto, sans-serif'; c.fillStyle = '#4a4f56';
+    for (const [nm, o, len] of SC) {
+      const a = Math.max(X(o), ML), b = Math.min(X(o + len), ML + pw());
+      if (b - a >= 11) { c.save(); c.translate((a + b) / 2 + 3, MT - 5); c.rotate(-Math.PI / 2); c.textAlign = 'left'; c.fillText(nm.replace(/^scaffold_/, 's'), 0, 0); c.restore(); }
+      const u = Math.max(Y(o), MT), v = Math.min(Y(o + len), MT + pw());
+      if (v - u >= 11) { c.textAlign = 'left'; c.fillText(nm.replace(/^scaffold_/, 's'), ML + pw() + 5, (u + v) / 2 + 3); }
+    }
+    res.textContent = `${flen((have || L).bp)} bins` + (L.sq ? '' : ' · loading finer…');
+  }
+  function layout() {
+    const w = Math.max(320, Math.min(host.clientWidth, 820));
+    if (w === size) return;
+    size = w; dpr = window.devicePixelRatio || 1;
+    cv.width = cv.height = w * dpr; cv.style.width = cv.style.height = w + 'px';
+    draw();
+  }
+  const pos = ev => { const r = cv.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+  const inside = (x, y) => x >= ML && x <= ML + pw() && y >= MT && y <= MT + pw();
+  const clamp = () => { view.s = Math.min(G, Math.max(view.s, LV[LV.length - 1].bp * 20));
+    view.x0 = Math.min(Math.max(view.x0, 0), G - view.s); view.y0 = Math.min(Math.max(view.y0, 0), G - view.s); };
+  const zoomed = () => { btn.style.display = view.s < G ? 'block' : 'none'; };
+  cv.addEventListener('wheel', ev => {
+    const [px, py] = pos(ev); if (!inside(px, py)) return;
+    ev.preventDefault(); hideTip();
+    const gx = iX(px), gy = iY(py), f = Math.exp(ev.deltaY * (ev.deltaMode ? 0.05 : 0.0015));
+    view.s *= f; view.x0 = gx - (px - ML) / pw() * view.s; view.y0 = gy - (py - MT) / pw() * view.s;
+    clamp(); zoomed(); draw();
+  }, {passive: false});
+  cv.addEventListener('mousedown', ev => { const p = pos(ev); if (inside(...p)) { drag = {p, x0: view.x0, y0: view.y0}; moved = false; cv.classList.add('drag'); ev.preventDefault(); } });
+  window.addEventListener('mouseup', () => { drag = null; cv.classList.remove('drag'); });
+  cv.addEventListener('mousemove', ev => {
+    const [px, py] = pos(ev);
+    if (drag) {
+      const k = view.s / pw(); view.x0 = drag.x0 - (px - drag.p[0]) * k; view.y0 = drag.y0 - (py - drag.p[1]) * k;
+      moved = true; clamp(); hideTip(); draw(); return;
+    }
+    if (!inside(px, py)) { hideTip(); return; }
+    const gx = iX(px), gy = iY(py), L = [...LV].reverse().find(l => l.bp >= level().bp && l.sq);
+    const sx = scafAt(gx), sy = scafAt(gy);
+    let cnt = '';
+    if (L) {
+      const v = L.sq[Math.min(L.n - 1, Math.floor(gy / L.bp)) * L.n + Math.min(L.n - 1, Math.floor(gx / L.bp))];
+      cnt = `<br>contacts ≈ <b>${fint(Math.expm1(v * Math.log1p(L.vmax) / 255))}</b> in ${flen(L.bp)} × ${flen(L.bp)}`;
+    }
+    const cx = ctgAt(gx), cy = ctgAt(gy);
+    const ctg = (c, g) => !CT.length ? '' : c ? ` <span style="color:#888">· ${escH(c[0])} (${c[3]}) ${flen(c[3] === '-' ? c[1] + c[2] - g : g - c[1])}</span>` : ' <span style="color:#888">· gap</span>';
+    showTip(`<b>${escH(sx[0])}</b> ${flen(gx - sx[1])}${ctg(cx, gx)}<br><b>${escH(sy[0])}</b> ${flen(gy - sy[1])}${ctg(cy, gy)}${cnt}` +
+            (sx === sy ? '' : '<br><span style="color:#888">between scaffolds</span>'), ev);
+  });
+  cv.addEventListener('mouseleave', hideTip);
+  const reset = () => { view = {x0: 0, y0: 0, s: G}; zoomed(); draw(); };
+  cv.addEventListener('dblclick', reset); btn.addEventListener('click', reset);
+  hicLevel(LV[0]).then(() => { layout(); draw(); });
+  if (window.ResizeObserver) new ResizeObserver(layout).observe(host); else window.addEventListener('resize', layout);
+}
+
 /* ---------------------------------------------------------------- generic line chart (CiFi) */
 function lineChart(host, series, o) {
   // series: [{label, color, dash, pts: [[x, y], ...]}]; o: {xlog, ylog, xfmt, yfmt, xlabel, ylabel, title, tipHead}
@@ -1207,6 +1352,7 @@ bars();
 nxCurves();
 cifiCharts();
 document.querySelectorAll('.dp').forEach(h => dotplot(h, D.dp[h.dataset.key]));
+document.querySelectorAll('.hic').forEach(h => hicMap(h, D.hic[h.dataset.key]));
 })();
 """
 
