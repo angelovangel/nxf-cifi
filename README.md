@@ -1,6 +1,7 @@
 # nxf-cifi
 
-Genome assembly with hifiasm from HiFi reads, optionally with ONT ultra-long reads (`--ont`, passed as `--ul`). With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
+Genome assembly with hifiasm from HiFi reads, optionally with ONT ultra-long reads (`--ont`, passed as `--ul`), or from
+ONT reads alone (`--ont` without `--hifi`: `hifiasm --ont`). With CiFi reads, it also phases the haplotypes and scaffolds them to chromosome scale. Every process runs in a container (Docker by default).
 
 ```
 without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
@@ -18,6 +19,18 @@ report         : report/report.html, a single self-contained page with all of th
 
 ## Run
 
+| Inputs | hifiasm | Phasing | Scaffolding | Output |
+| :-- | :-- | :-- | :-- | :-- |
+| `--hifi` | HiFi | partial (hifiasm default) | – | primary, hap1, hap2 contigs |
+| `--hifi --ont` | HiFi + `--ul` ONT | partial (hifiasm default) | – | primary, hap1, hap2 contigs |
+| `--ont` | `--ont` (beta) | partial (hifiasm default) | – | primary, hap1, hap2 contigs |
+| `--hifi [--ont] --cifi` | HiFi [+ `--ul`] `--h1/--h2` | CiFi | YaHS (CiFi) | phased contigs + scaffolds |
+| `--ont --cifi` | `--ont` `--h1/--h2` | CiFi | YaHS (CiFi) | phased contigs + scaffolds |
+| `--assembly --cifi` | – (your contigs) | as given | YaHS (CiFi) | scaffolds |
+| `--cifi` | – | – | – | CiFi library QC only |
+
+Merqury runs with `--hifi` or `--meryl_db`; ONT-only runs need `--meryl_db` from HiFi or Illumina reads.
+
 ```bash
 # HiFi only
 nextflow run nxf-cifi --hifi hifi.bam --prefix myplant --outdir asm_hifi
@@ -29,6 +42,10 @@ nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --prefix myplant --o
 # published, it stays in work/): MERYL_DB=$(find work -type d -name 'hifi.k21.meryl' | head -1)
 nextflow run nxf-cifi --hifi hifi.bam --ont ont_ul.fastq.gz --cifi cifi.bam --enzyme HindIII \
     --prefix myplant --outdir asm_CiFi --meryl_db $MERYL_DB
+
+# ONT only (hifiasm --ont, beta in 0.25: simplex R10.4.1 FASTQ, Q20+ and >= 40x best); add --cifi to phase + scaffold.
+# merqury needs a k-mer DB of accurate reads (--meryl_db from HiFi or Illumina), otherwise it is skipped
+nextflow run nxf-cifi --ont ont.fastq.gz --prefix myplant --outdir asm_ont
 
 # CiFi library QC only (no assembly): reads QC, PCR duplicates, cifi qc, digest report
 nextflow run nxf-cifi --cifi cifi.bam --enzyme HindIII --prefix myplant --outdir cifi_qc

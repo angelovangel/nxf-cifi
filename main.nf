@@ -5,6 +5,7 @@
  * Nextflow port of run_hifiasm.sh; every process runs in a container (docker by default).
  *
  * Without --cifi : reads QC -> hifiasm [--ul] -> contigs (primary, hap1, hap2) -> evaluation
+ * ONT only       : --ont without --hifi: hifiasm --ont (ONT simplex R10, beta in hifiasm 0.25) instead of HiFi [--ul]
  * With --cifi    : reads QC -> cifi qc -> cifi digest (segments + Hi-C-like R1/R2)
  *                  -> hifiasm [--ul] --h1 R1 --h2 R2 -> phased contigs (hap1, hap2)
  *                  -> per haplotype: minimap2 map-hifi (segments) -> cifi contacts -> yahs scaffolds
@@ -190,12 +191,16 @@ process HIFIASM {
     def args = ["-o ${params.prefix}", "-t ${task.cpus}", "--n-hap ${params.ploidy}", "--telo-m ${params.telo_motif_r}"]
     if (params.purge != null) args << "-l ${params.purge}"
     def ontFiles = [ont].flatten()
-    if (ontFiles) args << "--ul ${ontFiles.join(',')}"     // ONT ultra-long reads are optional
+    def hifiFiles = [hifi].flatten()
+    // HiFi: ONT ultra-long reads are optional (--ul). No HiFi: ONT-only assembly (hifiasm --ont, simplex R10 reads)
+    def reads = hifiFiles ?: ontFiles
+    if (!hifiFiles) args << "--ont"
+    else if (ontFiles) args << "--ul ${ontFiles.join(',')}"
     if (hicFiles) args << "--h1 ${hicFiles[0]} --h2 ${hicFiles[1]}"
     if (params.hifiasm_args) args << params.hifiasm_args
     """
     hifiasm --version > hifiasm.version
-    hifiasm ${args.join(' ')} ${[hifi].flatten().join(' ')} 2> ${params.prefix}.hifiasm.log \\
+    hifiasm ${args.join(' ')} ${reads.join(' ')} 2> ${params.prefix}.hifiasm.log \\
         || { tail -n 30 ${params.prefix}.hifiasm.log >&2; exit 1; }
     """
     stub:
@@ -549,10 +554,15 @@ workflow {
     if (params.assembly) {
         if (!params.cifi) error "--assembly needs --cifi (CiFi scaffolding of an existing assembly); see --help"
         if (asmFiles.size() > 2) error "--assembly takes one or two FASTAs (hap1[,hap2]), got ${asmFiles.size()}"
-    } else if (!params.hifi && !params.cifi) error "--hifi is required (or --assembly + --cifi, or --cifi alone for CiFi QC); see --help"
-    // --cifi without --hifi / --assembly: CiFi library QC only (reads QC, duplicates, cifi qc, digest)
-    def cifiOnly = params.cifi && !params.hifi && !params.assembly
-    if (cifiOnly) log.info "--cifi without --hifi or --assembly: CiFi QC only (no assembly, scaffolding or report)"
+    } else if (!params.hifi && !params.ont && !params.cifi)
+        error "--hifi or --ont is required (or --assembly + --cifi, or --cifi alone for CiFi QC); see --help"
+    // --cifi without reads to assemble or --assembly: CiFi library QC only (reads QC, duplicates, cifi qc, digest)
+    def cifiOnly = params.cifi && !params.hifi && !params.ont && !params.assembly
+    if (cifiOnly) log.info "--cifi without --hifi, --ont or --assembly: CiFi QC only (no assembly, scaffolding or report)"
+    // --ont without --hifi: ONT-only assembly (hifiasm --ont); merqury needs a k-mer DB of accurate reads (--meryl_db)
+    def ontOnly = params.ont && !params.hifi && !params.assembly
+    if (ontOnly) log.info "--ont without --hifi: ONT-only assembly (hifiasm --ont, needs simplex R10 FASTQ, Q20+ best)" +
+        (params.meryl_db || params.skip_merqury ? "" : "; merqury skipped (no --meryl_db from HiFi / Illumina reads)")
     // name of the assembly set: hifiasm bp (no CiFi) / hic (CiFi phasing) or asm (--assembly)
     def mode = params.assembly ? 'asm' : params.cifi ? 'hic' : 'bp'
 
@@ -610,7 +620,7 @@ workflow {
             asm.each { n, f -> log.info "  ${f} -> fasta/${n}.fa" }
             ch_ctg = ASM_IMPORT(Channel.fromList(asm))
         } else {
-            HIFIASM(ch_hifi, ch_ont, ch_hic)
+            HIFIASM(params.hifi ? ch_hifi : Channel.value([]), ch_ont, ch_hic)   // [] HiFi: ONT-only
             ch_ctg = GFA2FASTA(HIFIASM.out.gfa.flatten())    // [name, fa, fai]
         }
 

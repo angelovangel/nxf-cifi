@@ -13,12 +13,12 @@
             "properties": {
                 "hifi": {
                     "type": "string",
-                    "description": "HiFi reads: .bam / .fastq(.gz) / .fasta(.gz); comma-separated or glob",
+                    "description": "HiFi reads: .bam / .fastq(.gz) / .fasta(.gz); comma-separated or glob (or --ont alone for an ONT-only assembly)",
                     "fa_icon": "fas fa-file"
                 },
                 "ont": {
                     "type": "string",
-                    "description": "ONT ultra-long reads (optional, hifiasm --ul): .fastq(.gz); comma-separated or glob",
+                    "description": "ONT reads: .fastq(.gz); comma-separated or glob. With --hifi: ultra-long reads (hifiasm --ul); without --hifi: ONT-only assembly (hifiasm --ont, simplex R10, Q20+ best)",
                     "fa_icon": "fas fa-file"
                 },
                 "ont_minlen": {
