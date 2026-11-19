@@ -815,10 +815,17 @@ td.best { font-weight:700; background:var(--best) }
 td.worse { font-weight:700; background:var(--worse) }
 #flt { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; color:var(--muted) }
 #flt:empty { display:none }
-#flt .grp { display:flex; flex-wrap:wrap; gap:4px; align-items:center }
-#flt button.chip { font:inherit; font-size:12px; padding:2px 9px; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--fg); cursor:pointer }
-#flt button.chip.off { background:transparent; color:var(--muted); text-decoration:line-through; opacity:.7 }
-#flt input { font:inherit; font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:6px; width:170px; background:var(--card); color:var(--fg) }
+#flt details.ms { position:relative }
+#flt details.ms summary { list-style:none; cursor:pointer; font-size:12px; padding:3px 22px 3px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); position:relative; white-space:nowrap }
+#flt details.ms summary::-webkit-details-marker { display:none }
+#flt details.ms summary::after { content:'▾'; position:absolute; right:7px; color:var(--muted) }
+#flt details.ms.on summary { border-color:var(--accent); color:var(--accent) }
+#flt .msbox { position:absolute; top:calc(100% + 3px); left:0; z-index:20; min-width:170px; max-height:300px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.12); padding:6px 0 }
+#flt .msbox label { display:flex; gap:6px; align-items:center; padding:3px 10px; color:var(--fg); font-size:12px; cursor:pointer; white-space:nowrap }
+#flt .msbox label:hover { background:var(--hover) }
+#flt .msact { display:flex; gap:10px; padding:0 10px 5px; margin-bottom:4px; border-bottom:1px solid var(--line) }
+#flt .msact button { font:inherit; font-size:12px; border:0; background:none; color:var(--accent); cursor:pointer; padding:0 }
+#flt input[type=search] { font:inherit; font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:6px; width:170px; background:var(--card); color:var(--fg) }
 #flt .cnt { font-size:12px } #flt .clr { font:inherit; font-size:12px; border:0; background:none; color:var(--accent); cursor:pointer; padding:0 }
 tbody tr.fx { display:none }
 tbody tr:hover td { background:var(--hover) } tbody tr:hover td.best { background:var(--best) }
@@ -940,39 +947,48 @@ document.querySelectorAll('table.sortable').forEach(t => {
   const order = {hap1: 0, hap2: 1, primary: 2, contigs: 0, scaffolds: 1};
   const dims = [['run', 'Run', vals('run')], ['hap', 'Haplotype', vals('hap').sort((a, b) => order[a] - order[b])],
                 ['kind', 'Assembly', vals('kind').sort((a, b) => order[a] - order[b])]].filter(d => d[2].length > 1);
-  const off = {run: new Set(), hap: new Set(), kind: new Set()};
+  const off = {run: new Set(), hap: new Set(), kind: new Set()};   // unticked values per dimension
   const q = document.createElement('input'), cnt = document.createElement('span'), clr = document.createElement('button');
   q.type = 'search'; q.placeholder = 'filter rows (text)…'; cnt.className = 'cnt'; clr.className = 'clr'; clr.textContent = 'show all';
-  const chips = [];
+  const menus = [];
   function apply() {
     const t = q.value.trim().toLowerCase(); let n = 0;
     for (const r of rows) {
       const d = r.dataset, txt = [d.run, d.hap, d.kind, d.lab].join(' ').toLowerCase();
-      const hide = (d.run && off.run.has(d.run)) || (d.hap && off.hap.has(d.hap)) || (d.kind && off.kind.has(d.kind)) || (t && !txt.includes(t));
+      const hide = Object.keys(off).some(k => d[k] && off[k].has(d[k])) || (t && !txt.includes(t));
       r.classList.toggle('fx', !!hide); n += !!hide;
     }
-    chips.forEach(([b, k, v]) => b.classList.toggle('off', off[k].has(v)));
+    menus.forEach(m => m());
     cnt.textContent = n ? `${n} of ${rows.length} rows hidden` : ''; clr.style.display = n ? '' : 'none';
   }
   bar.append(Object.assign(document.createElement('span'), {textContent: 'Filter tables:'}));
   for (const [k, lab, vs] of dims) {
-    const g = document.createElement('span'); g.className = 'grp'; g.append(lab + ' ');
-    for (const v of vs) {
-      const b = document.createElement('button'); b.className = 'chip'; b.textContent = v;
-      b.title = 'click: show / hide; Alt- or Cmd/Ctrl-click: only this (again: all)';
-      b.addEventListener('click', ev => {
-        if (ev.altKey || ev.metaKey || ev.ctrlKey) {             // only this one; on an already solo chip: all again
-          const solo = !off[k].has(v) && vs.every(x => x === v || off[k].has(x));
-          off[k] = solo ? new Set() : new Set(vs.filter(x => x !== v));
-        } else off[k].has(v) ? off[k].delete(v) : off[k].add(v);
-        apply();
-      });
-      chips.push([b, k, v]); g.append(b);
+    // multi-select dropdown: <details> with a checkbox per value, plus all / none
+    const dd = document.createElement('details'), sm = document.createElement('summary'), box = document.createElement('div');
+    dd.className = 'ms'; box.className = 'msbox';
+    const cbs = vs.map(v => {
+      const l = document.createElement('label'), c = document.createElement('input');
+      c.type = 'checkbox'; c.checked = true;
+      c.addEventListener('change', () => { c.checked ? off[k].delete(v) : off[k].add(v); apply(); });
+      l.append(c, ' ' + v); box.append(l); return [c, v];
+    });
+    const act = document.createElement('div'); act.className = 'msact';
+    for (const [txt, f] of [['all', () => off[k].clear()], ['none', () => vs.forEach(v => off[k].add(v))]]) {
+      const b = document.createElement('button'); b.textContent = txt; b.type = 'button';
+      b.addEventListener('click', () => { f(); apply(); }); act.append(b);
     }
-    bar.append(g);
+    box.prepend(act);
+    menus.push(() => {
+      cbs.forEach(([c, v]) => c.checked = !off[k].has(v));
+      const on = vs.filter(v => !off[k].has(v));
+      sm.textContent = `${lab}: ${on.length === vs.length ? 'all' : !on.length ? 'none' : on.length <= 2 ? on.join(', ') : on.length + ' of ' + vs.length}`;
+      dd.classList.toggle('on', on.length < vs.length);
+    });
+    dd.append(sm, box); bar.append(dd);
   }
+  document.addEventListener('click', ev => bar.querySelectorAll('details.ms[open]').forEach(d => { if (!d.contains(ev.target)) d.open = false; }));
   q.addEventListener('input', apply);
-  clr.addEventListener('click', () => { Object.keys(off).forEach(k => off[k].clear()); q.value = ''; apply(); });
+  clr.addEventListener('click', () => { Object.values(off).forEach(o => o.clear()); q.value = ''; apply(); });
   bar.append(q, cnt, clr); apply();
 })();
 
