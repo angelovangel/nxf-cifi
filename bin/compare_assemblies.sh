@@ -412,9 +412,21 @@ COLS = [("Assembly", lambda r: r[0], None, None),
         ("QV", lambda r: r[col["QV"]], lambda r: num(r[col["QV"]]), max),
         ("k-mer compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
 
-def table(head, body, numeric_from=1):
+def row_tags(lab, run=None, hap=None):
+    """filter attributes of a table row (report filter bar): run, haplotype, contigs/scaffolds, label.
+    From the first cell (<run>_hap1, <run>Scaf_hap2, asm.hic.hap1.p_ctg.scaffolds, ...) or given for the table."""
+    ri = run_of(lab)
+    r = RUN_ORDER[ri] if ri is not None else run
+    m = re.search(r"hap[12]|primary", lab)
+    h = hap or (m[0] if m else "primary" if re.search(r"\.p_ctg(\.|$)", lab) else None)
+    k = ("scaffolds" if re.search(r"Scaf(_|$)|\.scaffolds$", lab) else "contigs") if h and not hap else None
+    a = {"run": r, "hap": h, "kind": k}
+    return "".join(f' data-{n}="{esc(v)}"' for n, v in a.items() if v) + (f' data-lab="{esc(lab)}"' if r or h else "")
+
+def table(head, body, numeric_from=1, run=None, hap=None, kind=None):
     """body: rows of (text, css class, sort value or None); click a header to sort.
-    Rows from several runs (first column = run or assembly label) get a grey background for every other run."""
+    Rows from several runs (first column = run or assembly label) get a grey background for every other run.
+    run / hap / kind tag all rows for the filter bar when the first column does not say (e.g. per-scaffold tables)."""
     h = "".join(f'<th class="{"num" if i >= numeric_from else ""}">{esc(c)}</th>' for i, c in enumerate(head))
     def td(i, cell):
         text, cls, v = (list(cell) + ["", None])[:3]
@@ -423,10 +435,12 @@ def table(head, body, numeric_from=1):
         return f'<td class="{cls.strip()}"{dv}>{esc(str(text))}</td>'
     runs = [run_of(str((list(r[0]) + [""])[0])) for r in body]
     banded = len({x for x in runs if x is not None}) > 1
-    def tr(r, run):
-        a = ' class="rb"' if banded and run is not None and run % 2 else ""
-        return f"<tr{a}>" + "".join(td(i, c) for i, c in enumerate(r)) + "</tr>"
-    b = "".join(tr(r, run) for r, run in zip(body, runs))
+    def tr(r, ri):
+        a = ' class="rb"' if banded and ri is not None and ri % 2 else ""
+        t = row_tags(str((list(r[0]) + [""])[0]), run, hap)
+        if kind: t += f' data-kind="{kind}"'
+        return f"<tr{a}{t}>" + "".join(td(i, c) for i, c in enumerate(r)) + "</tr>"
+    b = "".join(tr(r, ri) for r, ri in zip(body, runs))
     return f'<div class="scroll"><table class="sortable{" runs" if banded else ""}"><thead><tr>{h}</tr></thead><tbody>{b}</tbody></table></div>'
 
 best = {}
@@ -603,7 +617,7 @@ for run in RUNS:
     if rs:
         sec.append(table(["Query", "Target", "Query aligned (%)", "Target aligned (%)", "Inverted (Mb)", "Alignments"],
                          [[(r[0], ""), (r[1], ""), (r[5], "", num(r[5])), (r[7], "", num(r[7])),
-                           (mb(r[8]), "", num(r[8])), (intf(r[9]), "", num(r[9]))] for r in rs], 2))
+                           (mb(r[8]), "", num(r[8])), (intf(r[9]), "", num(r[9]))] for r in rs], 2, run=run["label"]))
     figs = []
     for png, r, js in run["dotplots"]:
         cap = esc(" vs ".join(r[:2])) if r else esc(os.path.basename(png))
@@ -702,7 +716,7 @@ for run in RUNS:
                        '<span class="lowkey">Highlighted</span>: % cis below 80% of the median, worth a look in '
                        'Juicebox (possible misjoin or a scaffold that belongs to another chromosome).</p>'
                        + table(["Scaffold", "Length (Mb)", "Segments", "Segments/Mb", "cis contacts",
-                                "trans contacts", "% cis"], body))
+                                "trans contacts", "% cis"], body, run=run["label"], hap=h or None, kind="scaffolds"))
     per_hap.append("".join(sec))
 HAS_CIFI = bool(lib or CIFI_SUMMARY or per_hap)
 if HAS_CIFI:
@@ -799,6 +813,14 @@ th[data-dir="asc"]::after { content:"▲"; color:var(--accent) } th[data-dir="de
 th.num, td.num { text-align:right; font-variant-numeric:tabular-nums }
 td.best { font-weight:700; background:var(--best) }
 td.worse { font-weight:700; background:var(--worse) }
+#flt { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; color:var(--muted) }
+#flt:empty { display:none }
+#flt .grp { display:flex; flex-wrap:wrap; gap:4px; align-items:center }
+#flt button.chip { font:inherit; font-size:12px; padding:2px 9px; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--fg); cursor:pointer }
+#flt button.chip.off { background:transparent; color:var(--muted); text-decoration:line-through; opacity:.7 }
+#flt input { font:inherit; font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:6px; width:170px; background:var(--card); color:var(--fg) }
+#flt .cnt { font-size:12px } #flt .clr { font:inherit; font-size:12px; border:0; background:none; color:var(--accent); cursor:pointer; padding:0 }
+tbody tr.fx { display:none }
 tbody tr:hover td { background:var(--hover) } tbody tr:hover td.best { background:var(--best) }
 tbody tr:last-child td { border-bottom:none }
 table.runs tbody tr.rb td:not(.best):not(.worse):not(.low) { background:var(--band) }   /* every other run */
@@ -909,6 +931,50 @@ document.querySelectorAll('table.sortable').forEach(t => {
     }).forEach(r => tb.appendChild(r));
   }));
 });
+
+/* ---------------------------------------------------------------- table filter (header bar) */
+(() => {
+  const bar = document.getElementById('flt'), rows = [...document.querySelectorAll('table.sortable tbody tr[data-lab]')];
+  if (!rows.length) return;
+  const vals = k => [...new Set(rows.map(r => r.dataset[k]).filter(Boolean))];
+  const order = {hap1: 0, hap2: 1, primary: 2, contigs: 0, scaffolds: 1};
+  const dims = [['run', 'Run', vals('run')], ['hap', 'Haplotype', vals('hap').sort((a, b) => order[a] - order[b])],
+                ['kind', 'Assembly', vals('kind').sort((a, b) => order[a] - order[b])]].filter(d => d[2].length > 1);
+  const off = {run: new Set(), hap: new Set(), kind: new Set()};
+  const q = document.createElement('input'), cnt = document.createElement('span'), clr = document.createElement('button');
+  q.type = 'search'; q.placeholder = 'filter rows (text)…'; cnt.className = 'cnt'; clr.className = 'clr'; clr.textContent = 'show all';
+  const chips = [];
+  function apply() {
+    const t = q.value.trim().toLowerCase(); let n = 0;
+    for (const r of rows) {
+      const d = r.dataset, txt = [d.run, d.hap, d.kind, d.lab].join(' ').toLowerCase();
+      const hide = (d.run && off.run.has(d.run)) || (d.hap && off.hap.has(d.hap)) || (d.kind && off.kind.has(d.kind)) || (t && !txt.includes(t));
+      r.classList.toggle('fx', !!hide); n += !!hide;
+    }
+    chips.forEach(([b, k, v]) => b.classList.toggle('off', off[k].has(v)));
+    cnt.textContent = n ? `${n} of ${rows.length} rows hidden` : ''; clr.style.display = n ? '' : 'none';
+  }
+  bar.append(Object.assign(document.createElement('span'), {textContent: 'Filter tables:'}));
+  for (const [k, lab, vs] of dims) {
+    const g = document.createElement('span'); g.className = 'grp'; g.append(lab + ' ');
+    for (const v of vs) {
+      const b = document.createElement('button'); b.className = 'chip'; b.textContent = v;
+      b.title = 'click: show / hide; Alt- or Cmd/Ctrl-click: only this (again: all)';
+      b.addEventListener('click', ev => {
+        if (ev.altKey || ev.metaKey || ev.ctrlKey) {             // only this one; on an already solo chip: all again
+          const solo = !off[k].has(v) && vs.every(x => x === v || off[k].has(x));
+          off[k] = solo ? new Set() : new Set(vs.filter(x => x !== v));
+        } else off[k].has(v) ? off[k].delete(v) : off[k].add(v);
+        apply();
+      });
+      chips.push([b, k, v]); g.append(b);
+    }
+    bar.append(g);
+  }
+  q.addEventListener('input', apply);
+  clr.addEventListener('click', () => { Object.keys(off).forEach(k => off[k].clear()); q.value = ''; apply(); });
+  bar.append(q, cnt, clr); apply();
+})();
 
 /* ---------------------------------------------------------------- metric bars */
 const V = (r, k) => r.v[k];
@@ -1515,7 +1581,7 @@ page = f"""<!doctype html>
 <style>{CSS}</style></head><body>
 <header><h1>{esc(title)}</h1>
 <p class="meta">{len(rows)} assemblies · {len(RUNS)} run(s) · generated {now}</p>
-<nav>{nav}</nav></header>
+<nav>{nav}</nav><div id="flt"></div></header>
 <main>{CMD_HTML}{"".join(parts)}</main>
 <footer>compare_assemblies.sh (nxf-cifi) · tables: comparison.tsv, hap_pairs.tsv · static plots: comparison.png, nx_curves.png</footer>
 <div id="tip"></div>
