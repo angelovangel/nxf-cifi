@@ -14,7 +14,7 @@ for f in "$@"; do
   fi
 done
 if (( ${#bams[@]} > 1 )); then
-  samtools cat -@ "$t" -o "$out" "${bams[@]}"
+  samtools cat -o "$out" "${bams[@]}"     # no -@: samtools cat is single-threaded (I/O bound)
 else
   mv "${bams[0]}" "$out"      # single imported FASTQ
 fi
