@@ -664,8 +664,8 @@ for run in RUNS:
 if scafs:
     parts.append('<section id="scaffolds"><h2>Scaffolds</h2><p class="note">YaHS scaffolds per haplotype: contigs '
                  'in alternating colours (arrow: orientation), gaps as dark marks, '
-                 '<span style="color:#2e9a52">■</span> telomere at that end. Hover a contig for details; click a '
-                 'scaffold to stretch it to full width (click again to go back).</p>' + "".join(scafs) + "</section>")
+                 '<span style="color:#d62728">■</span> telomere at that end; length and number of contigs at the '
+                 'right. Hover a contig or scaffold name for details.</p>' + "".join(scafs) + "</section>")
 
 # CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
 lib = []
@@ -858,8 +858,8 @@ svg .n50 { stroke:#c9ccd0; stroke-dasharray:4 4 }
 .hicfig { max-width:820px }
 .scgrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 560px), 1fr)) }
 .scaf svg { display:block; width:100%; height:auto; overflow:visible }
-.scaf .row { cursor:pointer } .scaf .row:hover .lab { font-weight:700 }
-.scaf .more { font:12px inherit; margin-top:6px; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer }
+.scaf .row:hover .lab { font-weight:700 }
+.scaf .more { font:12px inherit; margin-bottom:6px; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer }
 .hic { position:relative; width:100% }
 .hic canvas { display:block; cursor:grab; max-width:100%; touch-action:none } .hic canvas.drag { cursor:grabbing }
 .hic .reset { position:absolute; top:4px; left:4px; font:12px inherit; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer; display:none }
@@ -1445,20 +1445,25 @@ function hicMap(host, h) {
 function scafLayout(host, d) {
   const all = d.rows, big = all.filter(r => r[1] >= 1e6), rest = all.length - big.length;
   const restBp = all.filter(r => r[1] < 1e6).reduce((a, r) => a + r[1], 0);
-  let showAll = !big.length, zoom = new Set();
-  const W = 560, LW = 118, RW = 54, RH = 16, BH = 10, C = ['#3f78b5', '#9cc3e6'];
+  let showAll = !big.length;
+  const W = 560, LW = 118, RW = 96, RH = 16, BH = 10, C = ['#3f78b5', '#9cc3e6'];
   function draw() {
     host.innerHTML = '';
+    if (rest && big.length) {                          // toggle above the figure
+      const b = document.createElement('button'); b.className = 'more';
+      b.textContent = showAll ? `show only scaffolds ≥ 1 Mb` : `show all (+${rest.toLocaleString()} scaffolds < 1 Mb, ${flen(restBp)})`;
+      b.onclick = () => { showAll = !showAll; draw(); }; host.appendChild(b);
+    }
     const rows = showAll ? all : big, maxL = Math.max(...rows.map(r => r[1]), 1), bw = W - LW - RW;
     const svg = el('svg', {viewBox: `0 0 ${W} ${rows.length * RH + 4}`}, host);
     rows.forEach((r, i) => {
-      const [nm, L, ctgs, gaps, t0, t1] = r, y = i * RH + 2, z = zoom.has(nm), sc = bw / (z ? L : maxL);
+      const [nm, L, ctgs, gaps, t0, t1] = r, y = i * RH + 2, sc = bw / maxL;
       const g = el('g', {class: 'row'}, svg);
       el('rect', {x: 0, y, width: W, height: RH, fill: 'transparent'}, g);
       const lab = el('text', {x: LW - 6, y: y + RH / 2 + 4, 'text-anchor': 'end', class: 'lab', 'font-size': 11, fill: '#3b3f45'}, g);
-      lab.textContent = nm.replace(/^scaffold_/, 's') + (z ? ' ⇔' : '');
-      const len = el('text', {x: LW + bw * (z ? 1 : L / maxL) + 6, y: y + RH / 2 + 4, 'font-size': 10, fill: '#6b7078'}, g);
-      len.textContent = flen(L);
+      lab.textContent = nm.replace(/^scaffold_/, 's');
+      const len = el('text', {x: LW + bw * L / maxL + 9, y: y + RH / 2 + 4, 'font-size': 10, fill: '#6b7078'}, g);
+      len.textContent = `${flen(L)} · ${ctgs.length} ctg`;
       ctgs.forEach((c, k) => {
         const x = LW + c[1] * sc, w = Math.max((c[2] - c[1]) * sc, .6);
         const rc = el('rect', {x, y: y + (RH - BH) / 2, width: w, height: BH, fill: C[k % 2]}, g);
@@ -1473,18 +1478,12 @@ function scafLayout(host, d) {
       });
       gaps.forEach(([a]) => el('rect', {x: LW + a * sc - .5, y: y + 1, width: 1.2, height: RH - 2, fill: '#2b2f35'}, g));
       const tx = LW + L * sc;
-      if (t0) el('rect', {x: LW - 3, y: y + 2, width: 3, height: RH - 4, fill: '#2e9a52'}, g);
-      if (t1) el('rect', {x: tx, y: y + 2, width: 3, height: RH - 4, fill: '#2e9a52'}, g);
+      if (t0) el('rect', {x: LW - 5, y: y + 1, width: 5, height: RH - 2, fill: '#d62728'}, g);
+      if (t1) el('rect', {x: tx, y: y + 1, width: 5, height: RH - 2, fill: '#d62728'}, g);
       lab.addEventListener('mousemove', ev => showTip(`<b>${escH(nm)}</b> · ${flen(L)}<br>${ctgs.length} contig${ctgs.length > 1 ? 's' : ''}, ` +
         `${gaps.length} gap${gaps.length === 1 ? '' : 's'}<br>telomere: ${t0 && t1 ? 'both ends (T2T)' : t0 ? 'start' : t1 ? 'end' : 'none'}`, ev));
       lab.addEventListener('mouseleave', hideTip);
-      g.addEventListener('click', () => { zoom.has(nm) ? zoom.delete(nm) : zoom.add(nm); hideTip(); draw(); });
     });
-    if (rest && big.length) {
-      const b = document.createElement('button'); b.className = 'more';
-      b.textContent = showAll ? `show only scaffolds ≥ 1 Mb` : `show all (+${rest.toLocaleString()} scaffolds < 1 Mb, ${flen(restBp)})`;
-      b.onclick = () => { showAll = !showAll; draw(); }; host.appendChild(b);
-    }
   }
   draw();
 }
