@@ -647,19 +647,19 @@ for run in RUNS:
     figs = []
     for fn in run["agp"]:
         name = os.path.basename(fn)[:-len(".yahs_scaffolds_final.agp")]
-        rows, idx = read_agp(fn)
+        srows, idx = read_agp(fn)
         tt = os.path.join(run["path"], "eval", "telomeres", f"{name}.scaffolds.telo.tsv")
         if os.path.exists(tt):
             for line in list(open(tt))[1:]:
                 f = line.rstrip("\n").split("\t")
-                if len(f) >= 6 and f[0] in idx: rows[idx[f[0]]][4:6] = [int(f[4]), int(f[5])]
-        if not rows: continue
+                if len(f) >= 6 and f[0] in idx: srows[idx[f[0]]][4:6] = [int(f[4]), int(f[5])]
+        if not srows: continue
         key = f"scaf{len(DATA['scaf'])}"
-        DATA["scaf"][key] = {"rows": rows}
+        DATA["scaf"][key] = {"rows": srows}
         h = hap_of(fn)
         lab = f'{run["label"]}_{h}' if h else f'{run["label"]}_{name}'
         figs.append(f'<figure class="scfig"><div class="scaf" data-key="{key}"></div><figcaption>{esc(lab)}: '
-                    f'{sum(1 for r in rows if r[1] >= 1e6)} scaffolds ≥ 1 Mb of {len(rows)}</figcaption></figure>')
+                    f'{sum(1 for r in srows if r[1] >= 1e6)} scaffolds ≥ 1 Mb of {len(srows)}</figcaption></figure>')
     if figs: scafs.append(run_head(run) + '<div class="grid scgrid">' + "".join(figs) + "</div>")
 if scafs:
     parts.append('<section id="scaffolds"><h2>Scaffolds</h2><p class="note">YaHS scaffolds per haplotype: contigs '
