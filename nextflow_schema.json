@@ -9,7 +9,7 @@
             "title": "Reads",
             "type": "object",
             "fa_icon": "fas fa-terminal",
-            "description": "Reads for assembly from scratch (--hifi, optionally --ont), or an existing assembly with --assembly + --cifi.",
+            "description": "Reads for assembly from scratch (--hifi, optionally --ont), or an existing assembly with --assembly (CiFi scaffolding with --cifi, evaluation only without).",
             "properties": {
                 "hifi": {
                     "type": "string",
@@ -34,7 +34,7 @@
                 },
                 "assembly": {
                     "type": "string",
-                    "description": "Existing assembly hap1.fa[,hap2.fa] (.gz ok): skip hifiasm, scaffold these with CiFi and evaluate them. Needs --cifi; --hifi / --meryl_db optional (merqury QV), --ont optional (reads QC only)",
+                    "description": "Existing assembly hap1.fa[,hap2.fa] (.gz ok): skip hifiasm and evaluate these; with --cifi also scaffold them with CiFi. --hifi / --meryl_db optional (merqury QV), --ont optional (reads QC; ONT mapping with --map_ont)",
                     "pattern": "^[^,]+(,[^,]+)?$"
                 }
             }

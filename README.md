@@ -27,6 +27,7 @@ report         : report/report.html, a single self-contained page with all of th
 | `--hifi [--ont] --cifi` | HiFi [+ `--ul`] `--h1/--h2` | CiFi | YaHS (CiFi) | phased contigs + scaffolds |
 | `--ont --cifi` | `--ont` `--h1/--h2` | CiFi | YaHS (CiFi) | phased contigs + scaffolds |
 | `--assembly --cifi` | – (your contigs) | as given | YaHS (CiFi) | scaffolds |
+| `--assembly` | – (your assembly) | as given | – | evaluation only (+ ONT mapping with `--ont --map_ont`) |
 | `--cifi` | – | – | – | CiFi library QC only |
 
 Merqury runs with `--hifi` or `--meryl_db`; ONT-only runs need `--meryl_db` from HiFi or Illumina reads.
@@ -80,7 +81,7 @@ The report shows the mapping rate, mean depth and breadth per haplotype, and fla
 more than twice the haplotype's mean depth (collapsed repeats, duplications, contamination). With ultra-long data this
 step takes hours.
 
-### CiFi on an existing assembly
+### Existing assembly (CiFi scaffolding or evaluation only)
 
 `--assembly hap1.fa[,hap2.fa]` skips hifiasm and runs only the CiFi part on contigs you already have:
 duplicate rate, digestion, segment mapping, YaHS scaffolding, Juicebox/Pretext files and the CiFi contact analysis,
@@ -94,8 +95,15 @@ nextflow run nxf-cifi --assembly asm_noCiFi/fasta/myplant.bp.hap1.p_ctg.fa,asm_n
 
 - One or two FASTAs (.gz ok), in hap1, hap2 order. They are renamed `<prefix>.asm.hap1.p_ctg` / `hap2`, so outputs,
   dot plots and `compare_assemblies.sh` work as for a hifiasm run (`-d CiFiScaf=asm_CiFiScaf`).
-- `--cifi` is required. `--hifi` or `--meryl_db` turns on merqury QV; without either, merqury is skipped.
-  `--ont` is optional (reads QC only).
+- `--hifi` or `--meryl_db` turns on merqury QV; without either, merqury is skipped.
+  `--ont` is optional (reads QC; mapped to the assembly with `--map_ont`).
+- Without `--cifi`, the assembly is only evaluated: stats, telomeres, BUSCO, dot plots, merqury and ONT mapping as
+  above, and the report. Use it to add steps to a finished run whose work dir is gone, for example ONT coverage:
+
+  ```bash
+  nextflow run nxf-cifi --assembly asm_CiFi/fasta/myplant.hic.hap1.p_ctg.scaffolds.fa,asm_CiFi/fasta/myplant.hic.hap2.p_ctg.scaffolds.fa \
+      --ont ont_ul.fastq.gz --map_ont --skip_busco --prefix myplant --outdir asm_CiFi_ont
+  ```
 - The CiFi reads are used for scaffolding only. Phasing with CiFi (`hifiasm --h1/--h2`) needs a full run from reads.
 
 Inputs can be comma-separated lists or quoted globs (`--hifi 'reads/*.bam'`).

@@ -552,10 +552,12 @@ workflow {
     log.info paramsSummaryLog(workflow)
     def asmFiles = params.assembly ? params.assembly.toString().tokenize(',').collect { it.trim() } : []
     if (params.assembly) {
-        if (!params.cifi) error "--assembly needs --cifi (CiFi scaffolding of an existing assembly); see --help"
         if (asmFiles.size() > 2) error "--assembly takes one or two FASTAs (hap1[,hap2]), got ${asmFiles.size()}"
+        // without --cifi: evaluation (+ --map_ont) of the given assembly only
+        if (!params.cifi) log.info "--assembly without --cifi: evaluation only (stats, telomeres, BUSCO, dot plots" +
+            (params.hifi || params.meryl_db ? ", merqury" : "") + (params.map_ont && params.ont ? ", ONT mapping" : "") + ", report)"
     } else if (!params.hifi && !params.ont && !params.cifi)
-        error "--hifi or --ont is required (or --assembly + --cifi, or --cifi alone for CiFi QC); see --help"
+        error "--hifi or --ont is required (or --assembly, or --cifi alone for CiFi QC); see --help"
     // --cifi without reads to assemble or --assembly: CiFi library QC only (reads QC, duplicates, cifi qc, digest)
     def cifiOnly = params.cifi && !params.hifi && !params.ont && !params.assembly
     if (cifiOnly) log.info "--cifi without --hifi, --ont or --assembly: CiFi QC only (no assembly, scaffolding or report)"
