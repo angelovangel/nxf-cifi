@@ -382,7 +382,7 @@ def nx_points(ls):
     pts.append([100.0, ls[-1], len(ls)])
     return pts
 
-DATA = {"rows": [], "nx": {}, "dp": {}, "hic": {}, "scaf": {}}
+DATA = {"rows": [], "nx": {}, "dp": {}, "hic": {}, "scaf": {}, "pair": {}}
 for r in rows:
     m = re.search(r"_(hap[12]|primary)$", r[0])
     DATA["rows"].append({"label": r[0], "group": grp(r[0]), "color": gcol[grp(r[0])], "hap": m[1] if m else "",
@@ -443,16 +443,10 @@ def table(head, body, numeric_from=1, run=None, hap=None, kind=None):
     b = "".join(tr(r, ri) for r, ri in zip(body, runs))
     return f'<div class="scroll"><table class="sortable{" runs" if banded else ""}"><thead><tr>{h}</tr></thead><tbody>{b}</tbody></table></div>'
 
-best = {}
-for name, _, key, better in COLS:
-    if key and better and len(rows) > 1:
-        vals = [key(r) for r in rows if key(r) is not None]
-        if len(set(vals)) > 1: best[name] = better(vals)
-body = [[(f(r), "best" if name in best and key(r) == best[name] else "", key(r) if key else None)
-         for name, f, key, _ in COLS] for r in rows]
+body = [[(f(r), "", key(r) if key else None) for name, f, key, _ in COLS] for r in rows]
 
 parts = [f'<section id="assemblies"><h2>Assemblies</h2>'
-         f'<p class="note">Click a column header to sort. Best value per column highlighted (when the assemblies differ). '
+         f'<p class="note">Click a column header to sort. '
          f'Scaffolds inherit BUSCO and QV from their contigs. All columns: <code>comparison.tsv</code>.</p>'
          f'{table([c[0] for c in COLS], body)}']
 if pairs:
@@ -461,12 +455,18 @@ if pairs:
                        [[(p[0], ""), (p[1], "", num(p[1])), (p[2], "", num(p[2]))] for p in pairs]))
 parts.append("</section>")
 parts.append('<section id="plots"><h2>Comparison plots</h2>'
-             '<p class="note">Hover a bar for details; the same assembly is highlighted in every panel.'
+             '<p class="note">Hover a bar for details; the same assembly is highlighted in every panel. '
+             'Plots show the assemblies left by the table filter (top bar).'
              + (' Colour = run; darker shade = its YaHS scaffolds.' if len(runs_in_rows) > 1 else '')
              + '</p>'
              '<div id="bars" class="bars"></div>'
              '<h3>Nx curves</h3><p class="note">Hover to read Nx of every assembly at that point; click a legend entry to '
-             'hide or show it. Solid hap1, dashed hap2, dotted primary.</p><div id="nx" class="nx"></div></section>')
+             'hide or show it. Solid hap1, dashed hap2, dotted primary.</p><div id="nx" class="nx"></div>'
+             + ('<h3>Scaffolds</h3><p class="note">Every YaHS scaffold ≥ 1 Mb: length against the number of contigs it is '
+                'built from. Well-assembled chromosomes sit low (few contigs) and are filled (telomere at both ends). '
+                'Hover a point for details; click a legend entry to hide or show it.</p><div id="scsc" class="nx"></div>'
+                if any(run["agp"] for run in RUNS) else '')
+             + '</section>')
 
 # ---------------- CiFi contact analysis (bin/cifi_stats.py, after McGinty et al. 2026, Dennis lab)
 DATA["cifi"] = []
@@ -642,9 +642,42 @@ if dots:
                  'target and flipped (−) where most of them align reversed. Scaffold plots have a contig strip on each axis '
                  '(YaHS AGP; alternating shades, a break = contig join); hover it to highlight that contig.</p>' + "".join(dots) + "</section>")
 
+def pair_haps(run, n1, r1, n2, r2):
+    """hap2 scaffolds matched to hap1 scaffolds: from the hap2-vs-hap1 scaffold dot plot (most aligned bp; reversed
+    when most of it aligns on the minus strand), else by size rank. Returns (groups, method):
+    groups = [[hap1 index or -1, [[hap2 index, flipped], ...]], ...] in hap1 length order, unmatched hap2 last."""
+    i1 = {r[0]: i for i, r in enumerate(r1)}; i2 = {r[0]: i for i, r in enumerate(r2)}
+    d = None
+    for _png, _row, js in run["dotplots"]:
+        try: j = json.load(open(js)) if js else None
+        except ValueError: j = None
+        if j and j.get("t") == n1 + ".scaffolds" and j.get("q") == n2 + ".scaffolds" and j.get("segs"): d = j; break
+    m = {}                                                # hap2 index -> [hap1 index, flipped, mean hap1 position]
+    if d:
+        acc = {}
+        for ti, qi, ts, te, qs, qe, plus in d["segs"]:
+            a = acc.setdefault(qi, {}).setdefault(ti, [0, 0, 0.0])        # bp, plus bp, position * bp
+            w = qe - qs; a[0] += w; a[1] += w * plus; a[2] += (ts + te) / 2 * w
+        for qi, ts_ in acc.items():
+            ti, a = max(ts_.items(), key=lambda kv: kv[1][0])
+            q, t = d["qseq"][qi][0], d["tseq"][ti][0]
+            if q in i2 and t in i1: m[i2[q]] = [i1[t], a[1] * 2 < a[0], a[2] / a[0]]
+        method = "alignment"
+    else:                                                 # no dot plot: pair the n-th longest of each haplotype
+        o1 = sorted(range(len(r1)), key=lambda i: -r1[i][1]); o2 = sorted(range(len(r2)), key=lambda i: -r2[i][1])
+        for a, b in zip(o1, o2):
+            if r1[a][1] >= 1e6 and r2[b][1] >= 1e6: m[b] = [a, False, 0]
+        method = "size"
+    groups = []
+    for a in sorted(range(len(r1)), key=lambda i: -r1[i][1]):
+        hs = sorted((b for b, v in m.items() if v[0] == a), key=lambda b: m[b][2])
+        groups.append([a, [[b, int(m[b][1])] for b in hs]])
+    groups += [[-1, [[b, 0]]] for b in sorted((b for b in range(len(r2)) if b not in m), key=lambda b: -r2[b][1])]
+    return groups, method
+
 scafs = []
 for run in RUNS:
-    figs = []
+    figs, byhap = [], {}
     for fn in run["agp"]:
         name = os.path.basename(fn)[:-len(".yahs_scaffolds_final.agp")]
         srows, idx = read_agp(fn)
@@ -655,17 +688,33 @@ for run in RUNS:
                 if len(f) >= 6 and f[0] in idx: srows[idx[f[0]]][4:6] = [int(f[4]), int(f[5])]
         if not srows: continue
         key = f"scaf{len(DATA['scaf'])}"
-        DATA["scaf"][key] = {"rows": srows}
         h = hap_of(fn)
+        # asm: the Assemblies-table label of these scaffolds (colour + filter in the scaffold scatter plot)
+        DATA["scaf"][key] = {"rows": srows, "hap": h, "asm": f'{run["label"]}Scaf_{h}' if h else ""}
+        if h: byhap[h] = (name, srows)
         lab = f'{run["label"]}_{h}' if h else f'{run["label"]}_{name}'
         figs.append(f'<figure class="scfig"><div class="scaf" data-key="{key}"></div><figcaption>{esc(lab)}: '
                     f'{sum(1 for r in srows if r[1] >= 1e6)} scaffolds ≥ 1 Mb of {len(srows)}</figcaption></figure>')
+    if "hap1" in byhap and "hap2" in byhap:              # hap1 / hap2 side by side, per matched chromosome
+        (n1, r1), (n2, r2) = byhap["hap1"], byhap["hap2"]
+        groups, method = pair_haps(run, n1, r1, n2, r2)
+        key = f"pair{len(DATA['pair'])}"
+        DATA["pair"][key] = {"h1": r1, "h2": r2, "groups": groups, "by": method}
+        how = ("hap2 scaffolds matched to the hap1 scaffold they align to best (hap2 vs hap1 scaffold dot plot), "
+               "reverse-complemented (−) where they align reversed" if method == "alignment" else
+               "no hap2 vs hap1 scaffold dot plot: paired by size rank only, which can mismatch chromosomes")
+        # replaces the per-haplotype figures (same scaffolds, drawn per chromosome pair); kept for single-haplotype runs
+        figs = [f'<figure class="scfig pairfig"><div class="scpair" data-key="{key}"></div><figcaption>'
+                f'{esc(run["label"])}: hap1 and hap2 paired; {how}.</figcaption></figure>']
     if figs: scafs.append(run_head(run) + '<div class="grid scgrid">' + "".join(figs) + "</div>")
 if scafs:
-    parts.append('<section id="scaffolds"><h2>Scaffolds</h2><p class="note">YaHS scaffolds per haplotype: contigs '
+    parts.append('<section id="scaffolds"><h2>Scaffolds</h2><p class="note">YaHS scaffolds, hap1 and hap2 paired by '
+                 'chromosome when both are scaffolded (one figure per haplotype otherwise): contigs '
                  'in alternating colours (arrow: orientation), gaps as dark marks, '
                  '<span style="color:#d62728">■</span> telomere at that end; length and number of contigs at the '
-                 'right. Hover a contig or scaffold name for details.</p>' + "".join(scafs) + "</section>")
+                 'right. Hover a contig or scaffold name for details. In the paired view, a hollow '
+                 '<span style="color:#d62728">□</span> marks a telomere that the other haplotype has and this one '
+                 'lacks, and a contig count in red differs from the other haplotype (1:1 pairs only).</p>' + "".join(scafs) + "</section>")
 
 # CiFi: library QC -> contact summary across runs -> per run and haplotype: contact map, analysis, scaffolds
 lib = []
@@ -858,7 +907,9 @@ svg .n50 { stroke:#c9ccd0; stroke-dasharray:4 4 }
 .hicfig { max-width:820px }
 .scgrid { grid-template-columns:repeat(auto-fill, minmax(min(100%, 560px), 1fr)) }
 .scaf svg { display:block; width:100%; height:auto; overflow:visible }
-.scaf .row:hover .lab { font-weight:700 }
+.scaf .row:hover .lab, .scpair .row:hover .lab { font-weight:700 }
+.scgrid .pairfig { grid-column:1/-1; max-width:820px }
+.scpair .more { font:12px inherit; margin-bottom:6px; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer }
 .scaf .more { font:12px inherit; margin-bottom:6px; padding:2px 8px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer }
 .hic { position:relative; width:100% }
 .hic canvas { display:block; cursor:grab; max-width:100%; touch-action:none } .hic canvas.drag { cursor:grabbing }
@@ -940,6 +991,8 @@ document.querySelectorAll('table.sortable').forEach(t => {
 });
 
 /* ---------------------------------------------------------------- table filter (header bar) */
+// FLT: assembly labels hidden by the filter (rows of the Assemblies table); plots redraw on the 'flt' event
+const FLT = new Set();
 (() => {
   const bar = document.getElementById('flt'), rows = [...document.querySelectorAll('table.sortable tbody tr[data-lab]')];
   if (!rows.length) return;
@@ -959,6 +1012,9 @@ document.querySelectorAll('table.sortable').forEach(t => {
       r.classList.toggle('fx', !!hide); n += !!hide;
     }
     menus.forEach(m => m());
+    FLT.clear();
+    document.querySelectorAll('#assemblies tbody tr.fx[data-lab]').forEach(r => FLT.add(r.dataset.lab));
+    document.dispatchEvent(new Event('flt'));
     cnt.textContent = n ? `${n} of ${rows.length} rows hidden` : ''; clr.style.display = n ? '' : 'none';
   }
   bar.append(Object.assign(document.createElement('span'), {textContent: 'Filter tables:'}));
@@ -1011,13 +1067,16 @@ const METRICS = [
 ];
 function bars() {
   const host = document.getElementById('bars'); if (!host || !D.rows.length) return;
-  const n = D.rows.length, rh = 20, top = 28, lw = 124, W = 420, bw = W - lw - 44, H = top + n * rh + 20;
+  host.innerHTML = '';
+  const rows = D.rows.filter(r => !FLT.has(r.label));
+  if (!rows.length) { host.innerHTML = '<p class="note">All assemblies hidden by the filter.</p>'; return; }
+  const n = rows.length, rh = 20, top = 28, lw = 124, W = 420, bw = W - lw - 44, H = top + n * rh + 20;
   const hl = i => {
     host.classList.toggle('hl', i >= 0);
     host.querySelectorAll('g.row').forEach(g => g.classList.toggle('on', +g.dataset.i === i));
   };
   METRICS.forEach(m => {
-    const vals = D.rows.map(m.get), known = vals.filter(v => v != null);
+    const vals = rows.map(m.get), known = vals.filter(v => v != null);
     let lo = 0, hi = known.length ? Math.max(...known) : 1;
     if (m.zoom && known.length) {
       lo = Math.max(0, Math.floor(Math.min(...known) - 3));
@@ -1033,7 +1092,7 @@ function bars() {
       el('text', {x, y: top + n * rh + 14, class: 'tick', 'text-anchor': 'middle'}, svg).textContent = short(t);
     });
     el('line', {x1: lw, x2: lw, y1: top - 4, y2: top + n * rh, class: 'axis'}, svg);
-    D.rows.forEach((r, i) => {
+    rows.forEach((r, i) => {
       const y = top + i * rh, v = vals[i];
       const g = el('g', {class: 'row', 'data-i': i}, svg);
       el('rect', {x: 0, y, width: W, height: rh, class: 'hit'}, g);
@@ -1050,17 +1109,20 @@ function bars() {
 }
 
 /* ---------------------------------------------------------------- Nx curves */
+const nxHidden = new Set();                         // legend toggles, kept across filter redraws
 function nxCurves() {
   const host = document.getElementById('nx');
-  const rows = D.rows.filter(r => D.nx[r.label]);
-  if (!host || !rows.length) return;
+  if (!host || !D.rows.some(r => D.nx[r.label])) return;
+  host.innerHTML = '';
+  const rows = D.rows.filter(r => D.nx[r.label] && !FLT.has(r.label));
+  if (!rows.length) { host.innerHTML = '<p class="note">All assemblies hidden by the filter.</p>'; return; }
   const all = [];
   rows.forEach(r => ['scaf', 'ctg'].forEach(k => D.nx[r.label][k].forEach(p => all.push(p[1]))));
   if (!all.length) return;
   const l0 = Math.floor(Math.log10(Math.max(1, Math.min(...all)))), l1 = Math.max(l0 + 1, Math.ceil(Math.log10(Math.max(...all))));
   const W = 560, H = 340, ml = 58, mr = 14, mt = 28, mb = 40, pw = W - ml - mr, ph = H - mt - mb;
   const sx = x => ml + x / 100 * pw, sy = y => mt + ph - (Math.log10(Math.max(y, 1)) - l0) / (l1 - l0) * ph;
-  const hidden = new Set(), paths = [];
+  const hidden = nxHidden, paths = [];
   const at = (pts, x) => { let a = 0, b = pts.length - 1; while (a < b) { const c = (a + b + 1) >> 1; if (pts[c][0] <= x) a = c; else b = c - 1; } return pts[a]; };
   [['scaf', 'Scaffold Nx'], ['ctg', 'Contig Nx (split at N gaps)']].forEach(([k, title]) => {
     const box = document.createElement('div'); box.className = 'panel'; host.appendChild(box);
@@ -1087,6 +1149,7 @@ function nxCurves() {
       let d = '';
       pts.forEach((p, i) => { d += i ? `H${sx(p[0]).toFixed(1)}V${sy(p[1]).toFixed(1)}` : `M${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`; });
       const path = el('path', {d, fill: 'none', stroke: r.color, 'stroke-width': 1.7, 'stroke-dasharray': dash(r.hap)}, svg);
+      if (hidden.has(r.label)) path.style.display = 'none';
       paths.push({label: r.label, path});
       return {r, pts, dot: el('circle', {r: 3.2, fill: r.color, stroke: '#fff', 'stroke-width': 1, visibility: 'hidden'}, svg)};
     });
@@ -1111,6 +1174,7 @@ function nxCurves() {
   const leg = document.createElement('div'); leg.className = 'legend'; host.appendChild(leg);
   rows.forEach(r => {
     const s = document.createElement('span');
+    s.classList.toggle('off', hidden.has(r.label));
     s.innerHTML = `<svg viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="${r.color}" stroke-width="2.2" stroke-dasharray="${dash(r.hap)}"/></svg>${escH(r.label)}`;
     s.addEventListener('click', () => {
       const off = !hidden.has(r.label);
@@ -1442,50 +1506,159 @@ function hicMap(host, h) {
 
 /* ---------------------------------------------------------------- scaffold layout (YaHS AGP) */
 // d.rows: [name, length, contigs [[ctg, start, end, orient, cstart, cend]], gaps [[start, end]], telo_start, telo_end]
+const SC = {W: 560, LW: 118, RW: 96, RH: 16, BH: 10, C: ['#3f78b5', '#9cc3e6'], TEL: '#d62728'};
+const teloTxt = (a, b) => a && b ? 'both ends (T2T)' : a ? 'start' : b ? 'end' : 'none';
+// one scaffold row at y, sc = px per bp. o: label, labFill, flip (draw reverse-complemented), tip (extra tooltip line),
+// miss [left, right] (the other haplotype has a telomere at that drawn end, this one not), diff (contig count differs)
+function scafRow(svg, r, y, sc, o = {}) {
+  const {W, LW, RH, BH, C, TEL} = SC, [nm, L, ctgs, gaps, ts, te] = r, f = !!o.flip;
+  const X = p => LW + (f ? L - p : p) * sc;                // scaffold position -> x, mirrored when flipped
+  const g = el('g', {class: 'row'}, svg);
+  el('rect', {x: 0, y, width: W, height: RH, fill: 'transparent'}, g);
+  const lab = el('text', {x: LW - 8, y: y + RH / 2 + 4, 'text-anchor': 'end', class: 'lab', 'font-size': 11, fill: o.labFill || '#3b3f45'}, g);
+  lab.textContent = o.label || nm.replace(/^scaffold_/, 's');
+  const len = el('text', {x: LW + L * sc + 9, y: y + RH / 2 + 4, 'font-size': 10, fill: '#6b7078'}, g);
+  len.textContent = `${flen(L)} · `;
+  el('tspan', o.diff ? {fill: TEL, 'font-weight': 700} : {}, len).textContent = `${ctgs.length} ctg`;
+  ctgs.forEach((c, k) => {
+    const a = X(c[1]), b = X(c[2]), x = Math.min(a, b), w = Math.max(Math.abs(b - a), .6);
+    const rc = el('rect', {x, y: y + (RH - BH) / 2, width: w, height: BH, fill: C[k % 2]}, g);
+    if (w > 12) {                                         // orientation arrow
+      const cx = x + w / 2, cy = y + RH / 2, d = (c[3] === '-') !== f ? -1 : 1;
+      el('path', {d: `M${cx - 3 * d},${cy - 3} L${cx + 3 * d},${cy} L${cx - 3 * d},${cy + 3}`, fill: 'none', stroke: '#fff', 'stroke-width': 1.3}, g);
+    }
+    rc.addEventListener('mousemove', ev => showTip(
+      `<b>${escH(c[0])}</b> (${c[3]}) · ${flen(c[2] - c[1])}<br>contig ${fint(c[4] + 1)}–${fint(c[5])}` +
+      (c[5] - c[4] < c[2] - c[1] || c[4] > 0 ? ' (part)' : '') + `<br>${escH(nm)} ${flen(c[1])}–${flen(c[2])} · contig ${k + 1} of ${ctgs.length}` +
+      (f ? '<br>drawn reverse-complemented' : ''), ev));
+    rc.addEventListener('mouseleave', hideTip);
+  });
+  gaps.forEach(([a, b]) => el('rect', {x: X((a + b) / 2) - .6, y: y + 1, width: 1.2, height: RH - 2, fill: '#2b2f35'}, g));
+  const [tl, tr] = f ? [te, ts] : [ts, te], miss = o.miss || [];
+  [[tl, LW - 5, miss[0]], [tr, LW + L * sc, miss[1]]].forEach(([t, x, m]) => {
+    if (t) el('rect', {x, y: y + 1, width: 5, height: RH - 2, fill: TEL}, g);
+    else if (m) el('rect', {x: x + .6, y: y + 1.6, width: 3.8, height: RH - 3.2, fill: 'none', stroke: TEL, 'stroke-width': 1.2}, g);
+  });
+  lab.addEventListener('mousemove', ev => showTip(`<b>${escH(nm)}</b> · ${flen(L)}<br>${ctgs.length} contig${ctgs.length > 1 ? 's' : ''}, ` +
+    `${gaps.length} gap${gaps.length === 1 ? '' : 's'}<br>telomere: ${teloTxt(ts, te)}` + (o.tip ? `<br>${o.tip}` : ''), ev));
+  lab.addEventListener('mouseleave', hideTip);
+}
+function moreButton(host, showAll, rest, txt, onclick) {   // show all / only large toggle, above a figure
+  const b = document.createElement('button'); b.className = 'more';
+  b.textContent = showAll ? txt[0] : txt[1]; b.onclick = onclick; host.appendChild(b);
+}
 function scafLayout(host, d) {
   const all = d.rows, big = all.filter(r => r[1] >= 1e6), rest = all.length - big.length;
   const restBp = all.filter(r => r[1] < 1e6).reduce((a, r) => a + r[1], 0);
   let showAll = !big.length;
-  const W = 560, LW = 118, RW = 96, RH = 16, BH = 10, C = ['#3f78b5', '#9cc3e6'];
+  const {W, LW, RW, RH} = SC, bw = W - LW - RW;
   function draw() {
     host.innerHTML = '';
-    if (rest && big.length) {                          // toggle above the figure
-      const b = document.createElement('button'); b.className = 'more';
-      b.textContent = showAll ? `show only scaffolds ≥ 1 Mb` : `show all (+${rest.toLocaleString()} scaffolds < 1 Mb, ${flen(restBp)})`;
-      b.onclick = () => { showAll = !showAll; draw(); }; host.appendChild(b);
-    }
-    const rows = showAll ? all : big, maxL = Math.max(...rows.map(r => r[1]), 1), bw = W - LW - RW;
+    if (rest && big.length) moreButton(host, showAll, rest, ['show only scaffolds ≥ 1 Mb',
+      `show all (+${rest.toLocaleString()} scaffolds < 1 Mb, ${flen(restBp)})`], () => { showAll = !showAll; draw(); });
+    const rows = showAll ? all : big, maxL = Math.max(...rows.map(r => r[1]), 1);
     const svg = el('svg', {viewBox: `0 0 ${W} ${rows.length * RH + 4}`}, host);
-    rows.forEach((r, i) => {
-      const [nm, L, ctgs, gaps, t0, t1] = r, y = i * RH + 2, sc = bw / maxL;
-      const g = el('g', {class: 'row'}, svg);
-      el('rect', {x: 0, y, width: W, height: RH, fill: 'transparent'}, g);
-      const lab = el('text', {x: LW - 6, y: y + RH / 2 + 4, 'text-anchor': 'end', class: 'lab', 'font-size': 11, fill: '#3b3f45'}, g);
-      lab.textContent = nm.replace(/^scaffold_/, 's');
-      const len = el('text', {x: LW + bw * L / maxL + 9, y: y + RH / 2 + 4, 'font-size': 10, fill: '#6b7078'}, g);
-      len.textContent = `${flen(L)} · ${ctgs.length} ctg`;
-      ctgs.forEach((c, k) => {
-        const x = LW + c[1] * sc, w = Math.max((c[2] - c[1]) * sc, .6);
-        const rc = el('rect', {x, y: y + (RH - BH) / 2, width: w, height: BH, fill: C[k % 2]}, g);
-        if (w > 12) {                                   // orientation arrow
-          const cx = x + w / 2, cy = y + RH / 2, a = c[3] === '-' ? -1 : 1;
-          el('path', {d: `M${cx - 3 * a},${cy - 3} L${cx + 3 * a},${cy} L${cx - 3 * a},${cy + 3}`, fill: 'none', stroke: '#fff', 'stroke-width': 1.3}, g);
-        }
-        rc.addEventListener('mousemove', ev => showTip(
-          `<b>${escH(c[0])}</b> (${c[3]}) · ${flen(c[2] - c[1])}<br>contig ${fint(c[4] + 1)}–${fint(c[5])}` +
-          (c[5] - c[4] < c[2] - c[1] || c[4] > 0 ? ' (part)' : '') + `<br>${escH(nm)} ${flen(c[1])}–${flen(c[2])} · contig ${k + 1} of ${ctgs.length}`, ev));
-        rc.addEventListener('mouseleave', hideTip);
-      });
-      gaps.forEach(([a]) => el('rect', {x: LW + a * sc - .5, y: y + 1, width: 1.2, height: RH - 2, fill: '#2b2f35'}, g));
-      const tx = LW + L * sc;
-      if (t0) el('rect', {x: LW - 5, y: y + 1, width: 5, height: RH - 2, fill: '#d62728'}, g);
-      if (t1) el('rect', {x: tx, y: y + 1, width: 5, height: RH - 2, fill: '#d62728'}, g);
-      lab.addEventListener('mousemove', ev => showTip(`<b>${escH(nm)}</b> · ${flen(L)}<br>${ctgs.length} contig${ctgs.length > 1 ? 's' : ''}, ` +
-        `${gaps.length} gap${gaps.length === 1 ? '' : 's'}<br>telomere: ${t0 && t1 ? 'both ends (T2T)' : t0 ? 'start' : t1 ? 'end' : 'none'}`, ev));
-      lab.addEventListener('mouseleave', hideTip);
-    });
+    rows.forEach((r, i) => scafRow(svg, r, i * RH + 2, bw / maxL));
   }
   draw();
+}
+// hap1 and hap2 per matched chromosome. d: {h1, h2: rows, groups: [[hap1 index or -1, [[hap2 index, flipped], ...]]], by}
+function pairLayout(host, d) {
+  const {W, LW, RW, RH} = SC, bw = W - LW - RW, GAP = 6;
+  const ends = (r, f) => f ? [r[5], r[4]] : [r[4], r[5]];            // telomeres at the drawn left / right end
+  const sn = nm => nm.replace(/^scaffold_/, 's');
+  const isBig = ([a, hs]) => (a >= 0 && d.h1[a][1] >= 1e6) || hs.some(([b]) => d.h2[b][1] >= 1e6);
+  const big = d.groups.filter(isBig), rest = d.groups.length - big.length;
+  let showAll = !big.length;
+  function draw() {
+    host.innerHTML = '';
+    if (rest && big.length) moreButton(host, showAll, rest, ['show only chromosomes with a scaffold ≥ 1 Mb',
+      `show all (+${rest.toLocaleString()} smaller scaffolds)`], () => { showAll = !showAll; draw(); });
+    const items = [], bands = [];
+    let y = 2;
+    (showAll ? d.groups : big).forEach(([a, hs], gi) => {
+      const y0 = y, r1 = a >= 0 ? d.h1[a] : null, one = !!r1 && hs.length === 1;
+      const r2 = one ? d.h2[hs[0][0]] : null, e1 = r1 && ends(r1, 0), e2 = one && ends(r2, hs[0][1]);
+      const nc = one && r1[2].length !== r2[2].length;
+      if (r1) {
+        items.push({r: r1, y, o: {label: 'h1 ' + sn(r1[0]), miss: one ? [!e1[0] && e2[0], !e1[1] && e2[1]] : null, diff: nc,
+                    tip: hs.length ? `hap2: ${hs.map(([b, f]) => escH(d.h2[b][0]) + (f ? ' (−)' : '')).join(', ')}` : 'no hap2 scaffold matched'}});
+        y += RH;
+      }
+      hs.forEach(([b, f]) => {
+        items.push({r: d.h2[b], y, o: {label: 'h2 ' + sn(d.h2[b][0]) + (f ? ' −' : ''), labFill: '#5d6168', flip: f, diff: nc,
+                    miss: one ? [!e2[0] && e1[0], !e2[1] && e1[1]] : null,
+                    tip: (r1 ? `matched to hap1 ${escH(r1[0])}` : 'no hap1 match') + (f ? ', drawn reverse-complemented' : '')}});
+        y += RH;
+      });
+      if (gi % 2 === 0) bands.push([y0 - 1, y - y0 + 2]);
+      y += GAP;
+    });
+    const maxL = Math.max(1, ...items.map(it => it.r[1]));
+    const svg = el('svg', {viewBox: `0 0 ${W} ${y}`}, host);
+    bands.forEach(([by, bh]) => el('rect', {x: 0, y: by, width: W, height: bh, rx: 3, style: 'fill:var(--band)', opacity: .55}, svg));
+    items.forEach(it => scafRow(svg, it.r, it.y, bw / maxL, it.o));
+  }
+  draw();
+}
+
+/* ---------------------------------------------------------------- scaffold scatter: length vs contigs */
+const scHidden = new Set();                                // legend toggles, kept across filter redraws
+function scafScatter() {
+  const host = document.getElementById('scsc'); if (!host) return;
+  host.innerHTML = '';
+  const sets = Object.values(D.scaf).map(s => ({s, r: D.rows.find(r => r.label === s.asm)}))
+    .filter(x => x.r && !FLT.has(x.r.label));
+  const pts = [];
+  sets.forEach(({s, r}) => s.rows.forEach(q => { if (q[1] >= 1e6) pts.push({s, r, q, n: q[2].length, tel: !!q[4] + !!q[5]}); }));
+  if (!pts.length) { host.innerHTML = '<p class="note">No scaffolds ≥ 1 Mb in the assemblies left by the filter.</p>'; return; }
+  const W = 560, H = 360, ml = 54, mr = 14, mt = 28, mb = 40, pw = W - ml - mr, ph = H - mt - mb;
+  const lx = pts.map(p => Math.log10(p.q[1])), x0 = Math.floor(Math.min(...lx) * 2) / 2, x1 = Math.max(x0 + .5, Math.ceil(Math.max(...lx) * 2) / 2);
+  const ySteps = [2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000], nMax = Math.max(...pts.map(p => p.n));
+  const yTop = ySteps.find(v => v >= nMax * 1.15) || nMax * 1.15;
+  const sx = L => ml + (Math.log10(L) - x0) / (x1 - x0) * pw, sy = n => mt + ph - 10 - Math.log(n) / Math.log(yTop) * (ph - 10);   // 10 px above the axis for 1 contig
+  const box = document.createElement('div'); box.className = 'panel'; host.appendChild(box);
+  const svg = el('svg', {viewBox: `0 0 ${W} ${H}`}, box);
+  el('text', {x: 0, y: 14, class: 'ptitle'}, svg).textContent = 'Scaffolds ≥ 1 Mb: length vs contigs';
+  for (let e = Math.floor(x0); e <= Math.ceil(x1); e++) for (const m of [1, 2, 5]) {
+    const v = m * Math.pow(10, e), lv = Math.log10(v); if (lv < x0 - 1e-9 || lv > x1 + 1e-9) continue;
+    el('line', {x1: sx(v), x2: sx(v), y1: mt, y2: mt + ph, class: 'grid'}, svg);
+    el('text', {x: sx(v), y: mt + ph + 14, class: 'tick', 'text-anchor': 'middle'}, svg).textContent = flen(v).replace('.00', '');
+  }
+  [1, ...ySteps].filter(v => v <= yTop).forEach(v => {
+    el('line', {x1: ml, x2: ml + pw, y1: sy(v), y2: sy(v), class: 'grid'}, svg);
+    el('text', {x: ml - 6, y: sy(v) + 3, class: 'tick', 'text-anchor': 'end'}, svg).textContent = v;
+  });
+  el('rect', {x: ml, y: mt, width: pw, height: ph, fill: 'none', class: 'axis'}, svg);
+  el('text', {x: ml + pw / 2, y: H - 6, class: 'tick', 'text-anchor': 'middle'}, svg).textContent = 'scaffold length (log)';
+  el('text', {x: 12, y: mt + ph / 2, class: 'tick', 'text-anchor': 'middle', transform: `rotate(-90 12 ${mt + ph / 2})`}, svg).textContent = 'contigs per scaffold (log)';
+  const marks = [];
+  pts.forEach((p, i) => {
+    const x = sx(p.q[1]), y = sy(p.n) + ((i * 7919) % 9 - 4) * .7;    // small fixed jitter: many scaffolds share a count
+    const st = {fill: p.tel === 0 ? '#fff' : p.r.color, 'fill-opacity': p.tel === 1 ? .4 : 1, stroke: p.r.color, 'stroke-width': 1.4};
+    const m = p.s.hap === 'hap2' ? el('rect', Object.assign({x: x - 3.8, y: y - 3.8, width: 7.6, height: 7.6}, st), svg)
+                                 : el('circle', Object.assign({cx: x, cy: y, r: 4.2}, st), svg);
+    if (scHidden.has(p.r.label)) m.style.display = 'none';
+    marks.push([p.r.label, m]);
+    m.style.cursor = 'default';
+    m.addEventListener('mousemove', ev => showTip(`${sw(p.r.color)}<b>${escH(p.r.label)}</b><br>${escH(p.q[0])} · ${flen(p.q[1])}<br>` +
+      `${p.n} contig${p.n > 1 ? 's' : ''}, ${p.q[3].length} gap${p.q[3].length === 1 ? '' : 's'}<br>telomere: ${teloTxt(p.q[4], p.q[5])}`, ev));
+    m.addEventListener('mouseleave', hideTip);
+  });
+  const leg = document.createElement('div'); leg.className = 'legend'; host.appendChild(leg);
+  sets.forEach(({s, r}) => {
+    const sp = document.createElement('span'), sq = s.hap === 'hap2';
+    sp.classList.toggle('off', scHidden.has(r.label));
+    sp.innerHTML = `<svg viewBox="0 0 26 10">${sq ? `<rect x="9" y="1" width="8" height="8" fill="${r.color}"/>` : `<circle cx="13" cy="5" r="4.2" fill="${r.color}"/>`}</svg>${escH(r.label)}`;
+    sp.addEventListener('click', () => {
+      const off = !scHidden.has(r.label); off ? scHidden.add(r.label) : scHidden.delete(r.label);
+      sp.classList.toggle('off', off); marks.filter(([l]) => l === r.label).forEach(([, m]) => m.style.display = off ? 'none' : '');
+    });
+    leg.appendChild(sp);
+  });
+  const key = document.createElement('div'); key.className = 'note'; key.style.marginTop = '6px';
+  key.textContent = 'Telomeres: filled = both ends (T2T), half-filled = one end, hollow = none. Circle hap1, square hap2.';
+  host.appendChild(key);
 }
 
 /* ---------------------------------------------------------------- generic line chart (CiFi) */
@@ -1576,10 +1749,13 @@ function cifiCharts() {
 
 bars();
 nxCurves();
+scafScatter();
+document.addEventListener('flt', () => { hideTip(); bars(); nxCurves(); scafScatter(); });
 cifiCharts();
 document.querySelectorAll('.dp').forEach(h => dotplot(h, D.dp[h.dataset.key]));
 document.querySelectorAll('.hic').forEach(h => hicMap(h, D.hic[h.dataset.key]));
 document.querySelectorAll('.scaf').forEach(h => scafLayout(h, D.scaf[h.dataset.key]));
+document.querySelectorAll('.scpair').forEach(h => pairLayout(h, D.pair[h.dataset.key]));
 })();
 """
 
