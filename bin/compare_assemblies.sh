@@ -392,22 +392,22 @@ for label, fa, gb in sources:
 # summary table: (header, cell text, sort value, better = max / min / None)
 COLS = [("Assembly", lambda r: r[0], None, None),
         ("Size (Mb)", lambda r: mb(r[col["size_bp"]], 1), lambda r: num(r[col["size_bp"]]), None),
-        ("Scaffolds", lambda r: intf(r[col["scaffolds"]]), lambda r: num(r[col["scaffolds"]]), None),
-        ("Scaffold N50 (Mb)", lambda r: mb(r[col["scaffold_N50"]]), lambda r: num(r[col["scaffold_N50"]]), max),
+        ("n", lambda r: intf(r[col["scaffolds"]]), lambda r: num(r[col["scaffolds"]]), None),
+        ("N50 (Mb)", lambda r: mb(r[col["scaffold_N50"]]), lambda r: num(r[col["scaffold_N50"]]), max),
         ("Longest (Mb)", lambda r: mb(r[col["longest"]]), lambda r: num(r[col["longest"]]), max),
         ("≥ 1 Mb (n)", lambda r: intf(r[col["scaf_ge_1Mb"]]), lambda r: num(r[col["scaf_ge_1Mb"]]), None),
-        ("% bp in ≥ 1 Mb", lambda r: r[col["pct_bp_in_ge_1Mb"]], lambda r: num(r[col["pct_bp_in_ge_1Mb"]]), max),
+        ("% bp ≥ 1 Mb", lambda r: r[col["pct_bp_in_ge_1Mb"]], lambda r: num(r[col["pct_bp_in_ge_1Mb"]]), max),
         ("Gaps", lambda r: intf(r[col["gaps"]]), lambda r: num(r[col["gaps"]]), None),
-        ("Contigs", lambda r: intf(r[col["contigs"]]), lambda r: num(r[col["contigs"]]), None),
-        ("Contig N50 (Mb)", lambda r: mb(r[col["contig_N50"]]), lambda r: num(r[col["contig_N50"]]), max),
+        ("n", lambda r: intf(r[col["contigs"]]), lambda r: num(r[col["contigs"]]), None),
+        ("N50 (Mb)", lambda r: mb(r[col["contig_N50"]]), lambda r: num(r[col["contig_N50"]]), max),
         ("T2T", lambda r: r[col["T2T"]], lambda r: num(r[col["T2T"]]), max),
-        ("One telomere", lambda r: r[col["one_telo"]], lambda r: num(r[col["one_telo"]]), None),
-        ("BUSCO S", lambda r: r[col["BUSCO_S"]], lambda r: num(r[col["BUSCO_S"]]), max),
-        ("BUSCO D", lambda r: r[col["BUSCO_D"]], lambda r: num(r[col["BUSCO_D"]]), None),
-        ("BUSCO F", lambda r: r[col["BUSCO_F"]], lambda r: num(r[col["BUSCO_F"]]), None),
-        ("BUSCO M", lambda r: r[col["BUSCO_M"]], lambda r: num(r[col["BUSCO_M"]]), min),
+        ("One end", lambda r: r[col["one_telo"]], lambda r: num(r[col["one_telo"]]), None),
+        ("S", lambda r: r[col["BUSCO_S"]], lambda r: num(r[col["BUSCO_S"]]), max),
+        ("D", lambda r: r[col["BUSCO_D"]], lambda r: num(r[col["BUSCO_D"]]), None),
+        ("F", lambda r: r[col["BUSCO_F"]], lambda r: num(r[col["BUSCO_F"]]), None),
+        ("M", lambda r: r[col["BUSCO_M"]], lambda r: num(r[col["BUSCO_M"]]), min),
         ("QV", lambda r: r[col["QV"]], lambda r: num(r[col["QV"]]), max),
-        ("k-mer compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
+        ("Compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
 
 # coloured header groups of the assemblies table (title, n columns, css class); must add up to len(COLS)
 COL_GROUPS = [("", 2, ""), ("Scaffolds", 6, "g-scaf"), ("Contigs", 2, "g-ctg"), ("Telomeres", 2, "g-telo"),
