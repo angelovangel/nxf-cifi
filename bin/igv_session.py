@@ -5,11 +5,14 @@ usage: igv_session.py NAME FASTA TELO_TSV GAPS_BED AGP|none ONT(0/1) TELO_MOTIF_
 
 writes, for <outdir>/igv/ (paths in the session are relative to it, so the output folder can be moved):
   NAME.igv.xml          genome ../fasta/NAME.fa + the tracks below (+ ../ont_mapping/NAME.ont.bam with ONT=1)
-  NAME.contigs.bed      scaffolds only: contigs from the YaHS AGP, alternating colours, name = contig (+/-)
+  NAME.contigs.bed      contigs from the YaHS AGP, alternating colours, name = contig (+/-); without an AGP the
+                        pieces between N gaps (seq.1, seq.2, ...; no names or orientation), if there are gaps
   NAME.gaps.bed         N runs (from asm_stats.py)
   NAME.telomeres.bed    telomere repeat at sequence ends (asm_stats.py calls), length ~ copies x motif
   NAME.fa.fai           scaffolds only (contig FASTAs already have one in fasta/): IGV needs it next to the FASTA
+with ONT=1 the session also loads ../ont_mapping/NAME.ont.gaps.bed (ONT support of each join, from ont_gaps.sh)
 """
+import os
 import sys
 from xml.sax.saxutils import quoteattr
 
@@ -36,7 +39,9 @@ def write_fai(path, out):
     return {r[0]: r[1] for r in rows}
 
 
-lengths = write_fai(fasta, f"{name}.fa.fai") if name.endswith(".scaffolds") else None
+lengths = write_fai(fasta, f"{name}.fa.fai")
+if not name.endswith(".scaffolds"): os.remove(f"{name}.fa.fai")    # contig FASTAs: fasta/ already has the index
+gap_rows = [l.split("\t")[:3] for l in open(gaps) if l.strip() and not l.startswith(("track", "#"))]
 
 tracks = []
 if agp != "none":
@@ -50,6 +55,20 @@ if agp != "none":
             rgb = "63,120,181" if i % 2 == 0 else "156,195,230"   # as in the report's scaffold layout
             out.write(f"{f[0]}\t{int(f[1]) - 1}\t{f[2]}\t{f[5]} ({f[8]})\t0\t{f[8] if f[8] in '+-' else '.'}\t"
                       f"{int(f[1]) - 1}\t{f[2]}\t{rgb}\n")
+    tracks.append(f"{name}.contigs.bed")
+elif gap_rows:
+    # no AGP: the contigs are the pieces between N gaps
+    by = {}
+    for c, a, b in gap_rows: by.setdefault(c, []).append((int(a), int(b)))
+    with open(f"{name}.contigs.bed", "w") as out:
+        out.write('track name="contigs (split at N gaps)" itemRgb="On"\n')
+        for c, L in lengths.items():
+            p, k = 0, 0
+            for a, b in sorted(by.get(c, [])) + [(L, L)]:
+                if a > p:
+                    out.write(f"{c}\t{p}\t{a}\t{c}.{k + 1}\t0\t.\t{p}\t{a}\t{'63,120,181' if k % 2 == 0 else '156,195,230'}\n")
+                    k += 1
+                p = b
     tracks.append(f"{name}.contigs.bed")
 
 with open(gaps) as fh, open(f"{name}.gaps.bed", "w") as out:
@@ -72,9 +91,10 @@ tracks.append(f"{name}.telomeres.bed")
 res = [f"    <Resource path={quoteattr(t)} type=\"bed\"/>" for t in tracks]
 if ont:
     bam = f"../ont_mapping/{name}.ont.bam"
+    res.append(f"    <Resource path={quoteattr(f'../ont_mapping/{name}.ont.gaps.bed')} type=\"bed\"/>")
     res.append(f"    <Resource path={quoteattr(bam)} index={quoteattr(bam + '.csi')} type=\"bam\"/>")
 # the first sequence opens; the genome is the published FASTA (relative to this session file)
-first = next(iter(lengths)) if lengths else None
+first = next(iter(lengths), None)
 locus = f' locus="{first}"' if first else ""
 with open(f"{name}.igv.xml", "w") as out:
     out.write('<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n'

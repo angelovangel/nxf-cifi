@@ -77,7 +77,9 @@ Query sequences are mapped in 10 Mb pieces and lifted back, so chromosome-scale 
 Add `--map_ont` to map the ONT reads to hap1 and hap2 (the scaffolds with `--cifi`, the contigs otherwise) with minimap2
 `-x lr:hq` (Q20+ ONT reads). `ont_mapping/` gets a sorted BAM with a
 CSI index (chromosomes can exceed the BAI limit) for IGV, `samtools coverage` per sequence and `samtools flagstat`.
-The report shows the mapping rate, mean depth and breadth per haplotype, and flags sequences ≥ 1 Mb at less than half or
+Each N gap (a scaffold join) is also checked: `<hap>.ont.gaps.tsv/.bed` say whether reads cross it (≥ 2 reads
+≥ 1 kb into both sides = supported) or stop at it with the rest clipped (≥ 2 such reads and none crossing = conflict,
+a possible misjoin). The report shows the mapping rate, mean depth and breadth per haplotype, and flags sequences ≥ 1 Mb at less than half or
 more than twice the haplotype's mean depth (collapsed repeats, duplications, contamination). With ultra-long data this
 step takes hours.
 
@@ -121,13 +123,15 @@ cifi/qc  cifi/digest              cifi qc report, digest report (segments and R1
 cifi/markdup                      pbmarkdup duplicate summary (<prefix>.cifi.markdup.tsv) + log
 cifi/contacts                     cifi contacts report + stats per haplotype
 cifi/stats                        <hap>.cifi_stats.{tsv,json,png}, <hap>.cifi_scaffolds.tsv (contact analysis)
-hifiasm/                          contig GFAs + hifiasm log
+hifiasm/                          hifiasm log (contig GFAs are not published: same sequence as fasta/)
 fasta/                            contigs (+ .fai) and <hap>.scaffolds.fa
 scaffolds/<hap>/                  yahs output (scaffold FASTA is in fasta/), <hap>_JBAT.* (Juicebox), .hic, .pretext + snapshot PNGs
 eval/{stats,telomeres,compleasm,merqury}
 dotplots/                         <query>_vs_<target>.dotplot.{png,json,tsv} (+ .paf.gz); tsv = % of each side aligned, inverted bp
 igv/                              <hap>.igv.xml: IGV session per haplotype (File > Open Session): FASTA + contigs (AGP), gaps,
-                                  telomeres, ONT BAM (--map_ont); paths are relative, keep igv/ next to fasta/
+                                  telomeres, ONT BAM + join support (--map_ont); paths are relative, keep igv/ next to fasta/.
+                                  Contig track: YaHS AGP (found next to --assembly scaffolds of an earlier run),
+                                  otherwise the pieces between N gaps
 pipeline_info/                    timeline, resource report, trace; command.txt (nextflow command line)
 ```
 

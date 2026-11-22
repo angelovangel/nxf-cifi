@@ -178,7 +178,8 @@ process CIFI_DIGEST {
 /* =========================================================================== assembly */
 process HIFIASM {
     label 'hifiasm'
-    publishDir "${params.outdir}/hifiasm", mode: params.publish_mode
+    publishDir "${params.outdir}/hifiasm", mode: params.publish_mode,
+        saveAs: { it.endsWith('.gfa') ? null : it }    // log only: contig sequences are in fasta/, GFAs stay in work/
     input:
         path(hifi, stageAs: 'hifi/*')
         path(ont, stageAs: 'ont/*')
@@ -275,7 +276,8 @@ process MAP_ONT {
         path(ont, stageAs: 'ont/*')
     output:
         tuple val(name), path("${name}.ont.bam"), path("${name}.ont.bam.csi"), emit: bam
-        path "${name}.ont.{coverage,flagstat}.tsv", emit: stats
+        path "${name}.ont.{coverage,flagstat,gaps}.tsv", emit: stats
+        path "${name}.ont.gaps.bed"
     script:
     def mm2t = task.cpus > 5 ? task.cpus - 4 : 1
     def st = task.cpus > 4 ? 4 : 1
@@ -285,12 +287,14 @@ process MAP_ONT {
     samtools index -c -@ $st ${name}.ont.bam
     samtools coverage ${name}.ont.bam > ${name}.ont.coverage.tsv
     samtools flagstat -@ $st -O tsv ${name}.ont.bam > ${name}.ont.flagstat.tsv
+    ont_gaps.sh ${name} $fa ${name}.ont.bam     # do ONT reads cross each N gap (scaffold join)?
     """
     stub:
     """
     touch ${name}.ont.bam ${name}.ont.bam.csi
     printf "#rname\\tstartpos\\tendpos\\tnumreads\\tcovbases\\tcoverage\\tmeandepth\\tmeanbaseq\\tmeanmapq\\nctg1\\t1\\t8\\t10\\t8\\t100\\t25.5\\t30\\t60\\n" > ${name}.ont.coverage.tsv
     printf "100\\t0\\tprimary\\n95\\t0\\tprimary mapped\\n95.00%%\\tN/A\\tprimary mapped %%\\n" > ${name}.ont.flagstat.tsv
+    printf "seq\\tstart\\tend\\tspanning\\tbroken\\tstatus\\nctg1\\t4\\t5\\t3\\t0\\tsupported\\n" > ${name}.ont.gaps.tsv; touch ${name}.ont.gaps.bed
     """
 }
 
@@ -581,6 +585,7 @@ workflow {
         (params.meryl_db || params.skip_merqury ? "" : "; merqury skipped (no --meryl_db from HiFi / Illumina reads)")
     // name of the assembly set: hifiasm bp (no CiFi) / hic (CiFi phasing) or asm (--assembly)
     def mode = params.assembly ? 'asm' : params.cifi ? 'hic' : 'bp'
+    def asmAgp = []                   // --assembly: [name, AGP] found next to scaffold FASTAs of an earlier run
 
     // ---------------------------------------------------------------- reads
     // BAM -> FASTQ: HiFi always (hifiasm input), CiFi only for the reads QC (cifi itself reads the BAM)
@@ -634,6 +639,13 @@ workflow {
             // hap1[,hap2] in the given order -> <prefix>.asm.hap1.p_ctg / .hap2.p_ctg (same names as a hifiasm run)
             def asm = asmFiles.withIndex().collect { f, i -> ["${params.prefix}.asm.hap${i + 1}.p_ctg", file(f, checkIfExists: true)] }
             asm.each { n, f -> log.info "  ${f} -> fasta/${n}.fa" }
+            // scaffolds of an earlier nxf-cifi run (<run>/fasta/X.scaffolds.fa): its YaHS AGP gives the IGV contig track
+            asmAgp = asm.collect { n, f ->
+                def base = f.name.replaceAll(/\.scaffolds\.fa(\.gz)?$/, '')
+                def agp = f.parent.parent.resolve("scaffolds/${base}/${base}.yahs_scaffolds_final.agp")
+                base != f.name && agp.exists() ? [n, agp] : null
+            }.findAll { it != null }
+            asmAgp.each { _n, a -> log.info "  contig layout (IGV): ${a}" }
             ch_ctg = ASM_IMPORT(Channel.fromList(asm))
         } else {
             HIFIASM(params.hifi ? ch_hifi : Channel.value([]), ch_ont, ch_hic)   // [] HiFi: ONT-only
@@ -702,7 +714,11 @@ workflow {
             .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
             .join(ch_telo.map { f -> [f.name.replaceAll(/\.telo\.tsv$/, ''), f] })
             .join(ch_gaps.map { f -> [f.name.replaceAll(/\.gaps\.bed$/, ''), f] })
-        IGV_SESSION(params.cifi ? ch_igv.join(ch_agp_named) : ch_igv.map { n, fa, t, g -> [n, fa, t, g, []] })
+        // contig track from the AGP (YaHS, or found for --assembly); without one, igv_session.py splits at the N gaps
+        def ch_layout = params.cifi ? ch_agp_named : Channel.fromList(asmAgp)
+        IGV_SESSION(ch_igv.join(ch_layout, remainder: true)
+            .filter { it[1] != null }
+            .map { n, fa, t, g, a -> [n, fa, t, g, a ?: []] })
 
         // dot plots: hap2 vs hap1 (contigs, scaffolds) and, with --ref, every assembly vs the reference
         ch_dot = Channel.empty()

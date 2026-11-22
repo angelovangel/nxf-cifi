@@ -530,7 +530,7 @@ if DATA["cifi"]:
           'MAPQ threshold (k ≥ 2 give contacts, k ≥ 3 are multi-way).</p><div id="cifi-card" class="nx"></div>')
 
 # ---------------- ONT reads mapped to hap1 / hap2 (--map_ont): samtools coverage + flagstat
-ONT, ONT_SEQ = [], []   # per assembly; per sequence >= 1 Mb
+ONT, ONT_SEQ, ONT_GAP = [], [], []   # per assembly; per sequence >= 1 Mb; joins without ONT support
 for run in RUNS:
     for cf in run.get("ontcov", []):
         base = os.path.basename(cf)[:-len(".ont.coverage.tsv")]
@@ -551,11 +551,19 @@ for run in RUNS:
             for l in open(ff):
                 f = l.rstrip("\n").split("\t")
                 if len(f) >= 3: fs[f[2]] = f[0]
+        # ONT support of the joins (N gaps), from ont_gaps.sh: supported / conflict / no_evidence
+        gp = cf[:-len(".coverage.tsv")] + ".gaps.tsv"
+        gaps_ = [l.rstrip("\n").split("\t") for l in open(gp)][1:] if os.path.exists(gp) else None
+        gst = None if gaps_ is None else {k: sum(1 for g in gaps_ if len(g) >= 6 and g[5] == k)
+                                         for k in ("supported", "conflict", "no_evidence")}
+        if gaps_: ONT_GAP += [[lab, g[0], int(g[1]), int(g[2]), int(g[3]), int(g[4]), g[5]]
+                              for g in gaps_ if len(g) >= 6 and g[5] != "supported"]
         depth = sum(x[1] * x[4] for x in seqs) / tot
         big = [x for x in seqs if x[1] >= 1_000_000]
         ONT.append([lab, num(fs.get("primary")), num(fs.get("primary mapped %")), depth,
                     100 * sum(x[3] for x in seqs) / tot, len(seqs),
-                    sum(1 for x in big if x[4] < 0.5 * depth or x[4] > 2 * depth), base])
+                    sum(1 for x in big if x[4] < 0.5 * depth or x[4] > 2 * depth), base,
+                    None if gst is None else len(gaps_), gst])
         ONT_SEQ += [[lab, x[0], x[1], x[4], 100 * x[3] / x[1], x[5], x[4] / depth if depth else None] for x in big]
 ONT_HTML = ""
 if ONT:
@@ -566,10 +574,28 @@ if ONT:
         'primary alignments, from <code>samtools flagstat</code> and <code>samtools coverage</code>. Depth is the '
         'length-weighted mean over all sequences. A sequence ≥ 1 Mb at less than half or more than twice that depth '
         'is flagged: possible collapsed repeat, duplication, or contamination. BAMs (with CSI index) are in '
-        '<code>ont_mapping/</code> for IGV.</p>'
-        + table(["Haplotype", "Reads", "% mapped", "Mean depth (×)", "% bases covered", "Sequences", "Flagged ≥ 1 Mb"],
+        '<code>ont_mapping/</code> for IGV. <b>Joins</b>: N gaps between contigs (the YaHS joins). A join is '
+        '<b>supported</b> when ≥ 2 reads align ≥ 1 kb into both sides on the same strand, a <b>conflict</b> when no '
+        'read crosses it and ≥ 2 reads stop at it with ≥ 1 kb clipped (the rest of the read is elsewhere: possible '
+        'misjoin); otherwise there is no evidence either way (e.g. a repeat longer than the reads).</p>'
+        + table(["Haplotype", "Reads", "% mapped", "Mean depth (×)", "% bases covered", "Sequences", "Flagged ≥ 1 Mb",
+                 "Joins", "ONT-supported", "Conflict", "No evidence"],
                 [[(o[0], ""), (f2(o[1], 0), "", o[1]), (f2(o[2]), "", o[2]), (f2(o[3], 1), "", o[3]),
-                  (f2(o[4]), "", o[4]), (f"{o[5]:,}", "", o[5]), (str(o[6]), "", o[6])] for o in ONT])
+                  (f2(o[4]), "", o[4]), (f"{o[5]:,}", "", o[5]), (str(o[6]), "", o[6])]
+                 + ([("NA", "", None)] * 4 if o[9] is None else
+                    [(f"{o[8]:,}", "", o[8]),
+                     (f'{o[9]["supported"]:,} ({100 * o[9]["supported"] / o[8]:.0f}%)' if o[8] else "0", "", o[9]["supported"]),
+                     (f'{o[9]["conflict"]:,}', "worse" if o[9]["conflict"] else "", o[9]["conflict"]),
+                     (f'{o[9]["no_evidence"]:,}', "", o[9]["no_evidence"])]) for o in ONT])
+        + ('' if not ONT_GAP else '<details><summary>Joins not supported by ONT reads '
+           f'({sum(1 for g in ONT_GAP if g[6] == "conflict")} conflict, {sum(1 for g in ONT_GAP if g[6] != "conflict")} no evidence)'
+           '</summary><p class="note">Conflicts first: check them in the IGV session (<code>igv/</code>, track '
+           '&quot;ONT support of joins&quot;) and the contact map in Juicebox.</p>' +
+           table(["Haplotype", "Scaffold", "Gap start", "Gap end", "Spanning reads", "Broken reads", "Status"],
+                 [[(g[0], ""), (g[1], ""), (f"{g[2]:,}", "", g[2]), (f"{g[3]:,}", "", g[3]), (str(g[4]), "", g[4]),
+                   (str(g[5]), "", g[5]), (g[6].replace("_", " "), "worse" if g[6] == "conflict" else "")]
+                  for g in sorted(ONT_GAP, key=lambda g: (g[6] != "conflict", g[0], g[1], g[2]))],
+                 numeric_from=2) + '</details>')
         + ('' if not ONT_SEQ else '<h3>Sequences ≥ 1 Mb</h3><p class="note">Click a header to sort; flagged rows '
            'are outside 0.5–2× the haplotype&#39;s mean depth.</p>' +
            table(["Haplotype", "Sequence", "Length (Mb)", "Mean depth (×)", "% covered", "Mean MAPQ", "Depth / mean"],
