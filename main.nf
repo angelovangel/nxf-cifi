@@ -499,6 +499,20 @@ process DOTPLOT {
     """
 }
 
+process IGV_SESSION {
+    tag "$name"
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
+    publishDir "${params.outdir}/igv",   mode: params.publish_mode, pattern: '*.{igv.xml,bed}'
+    publishDir "${params.outdir}/fasta", mode: params.publish_mode, pattern: '*.fai'   // scaffold FASTA index for IGV
+    input:  tuple val(name), path(fa, stageAs: 'in/*'), path(telo, stageAs: 'in/*'), path(gaps, stageAs: 'in/*'), path(agp, stageAs: 'in/*')   // agp: [] for contigs
+    output: path "${name}.*"
+    script:
+    def ont = params.map_ont && params.ont ? 1 : 0
+    "igv_session.py $name $fa $telo $gaps ${agp ?: 'none'} $ont ${params.telo_motif_f.toString().length()}"
+    stub:
+    "touch ${name}.igv.xml ${name}.gaps.bed ${name}.telomeres.bed"
+}
+
 process SUMMARY {
     publishDir params.outdir, mode: params.publish_mode
     input:
@@ -630,6 +644,7 @@ workflow {
         ch_scaf = Channel.empty()
         ch_contact = Channel.empty()
         ch_agp = Channel.empty()          // YaHS AGPs: scaffold layout panel of the report
+        ch_agp_named = Channel.empty()    // [<hap>.scaffolds, agp]: contig track of the IGV session
         ch_cifi_stats = Channel.empty()
         if (params.cifi) {
             ch_haps = ch_ctg.filter { n, _fa, _fai -> n.endsWith(".${mode}.hap1.p_ctg") || n.endsWith(".${mode}.hap2.p_ctg") }
@@ -641,6 +656,7 @@ workflow {
             if (params.juicer_jar) JUICER_TOOLS(YAHS.out.jbat, Channel.value(file(params.juicer_jar, checkIfExists: true)))
             if (!params.skip_pretext) ch_contact = PRETEXTSNAPSHOT(PRETEXTMAP(YAHS.out.pairs))
             ch_agp = YAHS.out.agp.map { _n, agp -> agp }
+            ch_agp_named = YAHS.out.agp.map { n, agp -> [n + '.scaffolds', agp] }
         }
 
         // ---------------------------------------------------------------- evaluation
@@ -680,6 +696,13 @@ workflow {
         } else if (params.map_ont) {
             log.warn "--map_ont without --ont: no ONT reads to map"
         }
+
+        // IGV session per haplotype (scaffolds with CiFi, contigs otherwise): FASTA + contigs, gaps, telomeres, ONT BAM
+        def ch_igv = (params.cifi ? ch_scaf : ch_contigs)
+            .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
+            .join(ch_telo.map { f -> [f.name.replaceAll(/\.telo\.tsv$/, ''), f] })
+            .join(ch_gaps.map { f -> [f.name.replaceAll(/\.gaps\.bed$/, ''), f] })
+        IGV_SESSION(params.cifi ? ch_igv.join(ch_agp_named) : ch_igv.map { n, fa, t, g -> [n, fa, t, g, []] })
 
         // dot plots: hap2 vs hap1 (contigs, scaffolds) and, with --ref, every assembly vs the reference
         ch_dot = Channel.empty()
