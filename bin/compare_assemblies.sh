@@ -347,7 +347,11 @@ def intf(v):
     x = num(v)
     return "NA" if x is None else f"{x:,.0f}"
 
-PALETTE = ["#2f6fb3", "#e07b24", "#2e9a52", "#c8413b", "#7d5bb5", "#8a5a44", "#d0619f", "#6f747b", "#a7a426", "#1fa3b5"]
+# one hue per run, as light / dark pairs (like the scaffold layout): contigs light, YaHS scaffolds dark
+PAIRS = [("#8bbbe3", "#2f6aa8"), ("#f4b26f", "#c9661a"), ("#8fd19a", "#2f8a46"), ("#ee9a94", "#b8352f"),
+         ("#bba4e0", "#6a48a8"), ("#86cfd4", "#1f858d"), ("#d2ad8e", "#7d4f32"), ("#f1a7cf", "#b84a8a"),
+         ("#cfd07a", "#8a8a1c"), ("#b8bcc2", "#5d6269")]
+PALETTE = [d for _, d in PAIRS]
 RUN_ORDER = [sp.split("=", 2)[1] for sp in specs]       # -d / -a labels, in command-line order
 def run_of(text):
     """run of a row label: the run itself, <run>_hap1, <run>Scaf_hap2, ... (longest matching run label)"""
@@ -356,19 +360,12 @@ def run_of(text):
 
 grp = lambda l: re.sub(r"_(hap[12]|primary)$", "", l)
 groups = list(dict.fromkeys(grp(r[0]) for r in rows))
-def shade(hex_, f):
-    """mix a colour with black (f > 0, darker) or white (f < 0, lighter)"""
-    c = [int(hex_[i:i + 2], 16) for i in (1, 3, 5)]
-    c = [round(v * (1 - f)) if f > 0 else round(v + (255 - v) * -f) for v in c]
-    return "#" + "".join(f"{v:02x}" for v in c)
 runs_in_rows = {run_of(r[0]) for r in rows}
-if len(runs_in_rows) > 1:
-    # several runs: one hue per run (as in the CiFi charts); scaffolds a darker shade of their run's contigs.
-    # hap2 / primary stay lighter bars and dashed / dotted lines.
-    gcol = {g: shade(PALETTE[(run_of(g + "_x") or 0) % len(PALETTE)], 0.38 if g.endswith("Scaf") else 0) for g in groups}
-else:
-    # one run: contigs vs scaffolds (vs primary) are the groups that matter, one colour each
-    gcol = {g: PALETTE[i % len(PALETTE)] for i, g in enumerate(groups)}
+# hue = run (as in the CiFi charts), light = contigs, dark = YaHS scaffolds; hap2 / primary are dashed /
+# dotted lines and primary a paler bar. Labels that match no run get the next hues.
+_extra = [g for g in groups if run_of(g + "_x") is None]
+gcol = {g: PAIRS[((run_of(g + "_x") if run_of(g + "_x") is not None else len(RUN_ORDER) + _extra.index(g)))
+                 % len(PAIRS)][1 if g.endswith("Scaf") else 0] for g in groups}
 
 def nx_points(ls):
     """[x_start %, length, rank] steps of the Nx curve, thinned for long tails"""
@@ -454,10 +451,13 @@ if pairs:
                  table(["Run", "Combined QV", "Combined k-mer completeness (%)"],
                        [[(p[0], ""), (p[1], "", num(p[1])), (p[2], "", num(p[2]))] for p in pairs]))
 parts.append("</section>")
+_cn = (["colour = run"] if len(runs_in_rows) > 1 else []) + \
+      (["light = contigs, dark = YaHS scaffolds"] if any(g.endswith("Scaf") for g in groups) else [])
+COLOR_NOTE = (" " + "; ".join(_cn)[0].upper() + "; ".join(_cn)[1:] + "; grey lines separate the assemblies.") if _cn else ""
 parts.append('<section id="plots"><h2>Comparison plots</h2>'
              '<p class="note">Hover a bar for details; the same assembly is highlighted in every panel. '
              'Plots show the assemblies left by the table filter (top bar).'
-             + (' Colour = run; darker shade = its YaHS scaffolds.' if len(runs_in_rows) > 1 else '')
+             + COLOR_NOTE
              + '</p>'
              '<div id="bars" class="bars"></div>'
              '<h3>Nx curves</h3><p class="note">Hover to read Nx of every assembly at that point; click a legend entry to '
@@ -894,7 +894,7 @@ svg text { font-family:inherit; fill:#3b3f45 }
 svg .ptitle { font-size:13px; font-weight:600; fill:#1d1f21 }
 svg .tick { font-size:10px; fill:#80858c } svg .lab { font-size:11px } svg .val { font-size:10px; fill:#555 }
 svg .na { font-size:10px; fill:#a0a4aa; font-style:italic }
-svg .grid { stroke:#eceded } svg .axis { stroke:#b9bdc2 }
+svg .grid { stroke:#eceded } svg .sep { stroke:#c4c7cc; stroke-width:1 } svg .axis { stroke:#b9bdc2 }
 svg .hit { fill:transparent } svg g.row { cursor:default }
 .bars.hl g.row:not(.on) { opacity:.3 } .bars g.row.on .hit { fill:var(--hover) }
 svg .cross { stroke:#8d9298; stroke-dasharray:3 3 }
@@ -1095,6 +1095,7 @@ function bars() {
     el('line', {x1: lw, x2: lw, y1: top - 4, y2: top + n * rh, class: 'axis'}, svg);
     rows.forEach((r, i) => {
       const y = top + i * rh, v = vals[i];
+      if (i && r.group !== rows[i - 1].group) el('line', {x1: 0, x2: W, y1: y, y2: y, class: 'sep'}, svg);   // next assembly
       const g = el('g', {class: 'row', 'data-i': i}, svg);
       el('rect', {x: 0, y, width: W, height: rh, class: 'hit'}, g);
       el('text', {x: lw - 6, y: y + rh / 2 + 4, 'text-anchor': 'end', class: 'lab'}, g).textContent = r.label;
@@ -1149,7 +1150,7 @@ function nxCurves() {
       const pts = D.nx[r.label][k];
       let d = '';
       pts.forEach((p, i) => { d += i ? `H${sx(p[0]).toFixed(1)}V${sy(p[1]).toFixed(1)}` : `M${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`; });
-      const path = el('path', {d, fill: 'none', stroke: r.color, 'stroke-width': 1.7, 'stroke-dasharray': dash(r.hap)}, svg);
+      const path = el('path', {d, fill: 'none', stroke: r.color, 'stroke-width': 2, 'stroke-dasharray': dash(r.hap)}, svg);
       if (hidden.has(r.label)) path.style.display = 'none';
       paths.push({label: r.label, path});
       return {r, pts, dot: el('circle', {r: 3.2, fill: r.color, stroke: '#fff', 'stroke-width': 1, visibility: 'hidden'}, svg)};
