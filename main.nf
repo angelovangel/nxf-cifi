@@ -201,7 +201,7 @@ process HIFIASM {
     """
     hifiasm --version > hifiasm.version
     hifiasm ${args.join(' ')} ${reads.join(' ')} 2> ${params.prefix}.hifiasm.log \\
-        || { tail -n 30 ${params.prefix}.hifiasm.log >&2; exit 1; }
+        || { rc=\$?; tail -n 30 ${params.prefix}.hifiasm.log >&2; exit \$rc; }   # keep 137 (out of memory) visible
     """
     stub:
     """
