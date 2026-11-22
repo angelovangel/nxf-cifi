@@ -397,9 +397,9 @@ COLS = [("Assembly", lambda r: r[0], None, None),
         ("Longest (Mb)", lambda r: mb(r[col["longest"]]), lambda r: num(r[col["longest"]]), max),
         ("≥ 1 Mb (n)", lambda r: intf(r[col["scaf_ge_1Mb"]]), lambda r: num(r[col["scaf_ge_1Mb"]]), None),
         ("% bp in ≥ 1 Mb", lambda r: r[col["pct_bp_in_ge_1Mb"]], lambda r: num(r[col["pct_bp_in_ge_1Mb"]]), max),
+        ("Gaps", lambda r: intf(r[col["gaps"]]), lambda r: num(r[col["gaps"]]), None),
         ("Contigs", lambda r: intf(r[col["contigs"]]), lambda r: num(r[col["contigs"]]), None),
         ("Contig N50 (Mb)", lambda r: mb(r[col["contig_N50"]]), lambda r: num(r[col["contig_N50"]]), max),
-        ("Gaps", lambda r: intf(r[col["gaps"]]), lambda r: num(r[col["gaps"]]), None),
         ("T2T", lambda r: r[col["T2T"]], lambda r: num(r[col["T2T"]]), max),
         ("One telomere", lambda r: r[col["one_telo"]], lambda r: num(r[col["one_telo"]]), None),
         ("BUSCO S", lambda r: r[col["BUSCO_S"]], lambda r: num(r[col["BUSCO_S"]]), max),
@@ -408,6 +408,11 @@ COLS = [("Assembly", lambda r: r[0], None, None),
         ("BUSCO M", lambda r: r[col["BUSCO_M"]], lambda r: num(r[col["BUSCO_M"]]), min),
         ("QV", lambda r: r[col["QV"]], lambda r: num(r[col["QV"]]), max),
         ("k-mer compl. (%)", lambda r: r[col["kmer_compl_pct"]], lambda r: num(r[col["kmer_compl_pct"]]), max)]
+
+# coloured header groups of the assemblies table (title, n columns, css class); must add up to len(COLS)
+COL_GROUPS = [("", 2, ""), ("Scaffolds", 6, "g-scaf"), ("Contigs", 2, "g-ctg"), ("Telomeres", 2, "g-telo"),
+              ("BUSCO (%)", 4, "g-busco"), ("Merqury", 2, "g-merq")]
+assert sum(n for _, n, _ in COL_GROUPS) == len(COLS)
 
 def row_tags(lab, run=None, hap=None):
     """filter attributes of a table row (report filter bar): run, haplotype, contigs/scaffolds, label.
@@ -420,14 +425,23 @@ def row_tags(lab, run=None, hap=None):
     a = {"run": r, "hap": h, "kind": k}
     return "".join(f' data-{n}="{esc(v)}"' for n, v in a.items() if v) + (f' data-lab="{esc(lab)}"' if r or h else "")
 
-def table(head, body, numeric_from=1, run=None, hap=None, kind=None):
+def table(head, body, numeric_from=1, run=None, hap=None, kind=None, groups=None):
     """body: rows of (text, css class, sort value or None); click a header to sort.
     Rows from several runs (first column = run or assembly label) get a grey background for every other run.
-    run / hap / kind tag all rows for the filter bar when the first column does not say (e.g. per-scaffold tables)."""
-    h = "".join(f'<th class="{"num" if i >= numeric_from else ""}">{esc(c)}</th>' for i, c in enumerate(head))
+    run / hap / kind tag all rows for the filter bar when the first column does not say (e.g. per-scaffold tables).
+    groups: [(title, n columns, css class)] covering all columns: a coloured header row over related columns."""
+    cg = [""] * len(head)
+    if groups:
+        k = 0
+        for _, n, c in groups:
+            for j in range(k, k + n): cg[j] = (f"cg {c}" + (" cg0" if j == k else "")) if c else ""
+            k += n
+    h = "".join(f'<th class="{(("num " if i >= numeric_from else "") + cg[i]).strip()}">{esc(c)}</th>' for i, c in enumerate(head))
+    if groups:
+        h = "".join(f'<th colspan="{n}" class="grp{" " + c + " cg0" if c else ""}">{esc(t)}</th>' for t, n, c in groups) + "</tr><tr>" + h
     def td(i, cell):
         text, cls, v = (list(cell) + ["", None])[:3]
-        cls = ("num " if i >= numeric_from else "") + cls
+        cls = ("num " if i >= numeric_from else "") + cls + (" " + cg[i] if cg[i] else "")
         dv = "" if i < numeric_from else f' data-v="{"" if v is None else v}"'
         return f'<td class="{cls.strip()}"{dv}>{esc(str(text))}</td>'
     runs = [run_of(str((list(r[0]) + [""])[0])) for r in body]
@@ -445,7 +459,7 @@ body = [[(f(r), "", key(r) if key else None) for name, f, key, _ in COLS] for r 
 parts = [f'<section id="assemblies"><h2>Assemblies</h2>'
          f'<p class="note">Click a column header to sort. '
          f'Scaffolds inherit BUSCO and QV from their contigs. All columns: <code>comparison.tsv</code>.</p>'
-         f'{table([c[0] for c in COLS], body)}']
+         f'{table([c[0] for c in COLS], body, groups=COL_GROUPS)}']
 if pairs:
     parts.append('<h3>Haplotype pairs (hap1 + hap2)</h3>' +
                  table(["Run", "Combined QV", "Combined k-mer completeness (%)"],
@@ -857,6 +871,16 @@ table { border-collapse:collapse; font-size:13px }
 th, td { padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; text-align:left }
 th { font-weight:600; background:#fafafa; cursor:pointer; user-select:none; position:relative; padding-right:20px }
 th:hover { background:var(--hover) }
+/* column groups (assemblies table): one colour per topic, header and cells */
+th.grp { cursor:default; text-align:center; font-size:12px; letter-spacing:.02em; padding:4px 10px; color:#3b3f45 }
+th.grp::after { content:none }
+th.g-scaf, th.g-scaf:hover { background:#dbe7f6 } td.g-scaf { background:#f5f9fd }
+th.g-ctg, th.g-ctg:hover { background:#dbf0df } td.g-ctg { background:#f5fbf6 }
+th.g-telo, th.g-telo:hover { background:#f4ead6 } td.g-telo { background:#fcf9f3 }
+th.g-busco, th.g-busco:hover { background:#e9e1f5 } td.g-busco { background:#faf8fd }
+th.g-merq, th.g-merq:hover { background:#f7dfdb } td.g-merq { background:#fdf7f6 }
+th.cg:hover { filter:brightness(.95) }
+th.cg0, td.cg0 { border-left:1px solid #d3d6da }
 th::after { content:"↕"; position:absolute; right:6px; color:#b5b9bf; font-size:11px }
 th[data-dir="asc"]::after { content:"▲"; color:var(--accent) } th[data-dir="desc"]::after { content:"▼"; color:var(--accent) }
 th.num, td.num { text-align:right; font-variant-numeric:tabular-nums }
@@ -879,7 +903,8 @@ td.worse { font-weight:700; background:var(--worse) }
 tbody tr.fx { display:none }
 tbody tr:hover td { background:var(--hover) } tbody tr:hover td.best { background:var(--best) }
 tbody tr:last-child td { border-bottom:none }
-table.runs tbody tr.rb td:not(.best):not(.worse):not(.low) { background:var(--band) }   /* every other run */
+table.runs tbody tr.rb td:not(.best):not(.worse):not(.low):not(.cg) { background:var(--band) }
+table.runs tbody tr.rb td.cg:not(.best):not(.worse):not(.low) { box-shadow:inset 0 0 0 999px rgba(70,70,50,.06) }   /* every other run */
 figure { margin:0 0 18px; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px }
 figure img { width:100%; height:auto; display:block }
 figcaption { padding-top:6px }
@@ -975,7 +1000,7 @@ const dash = h => h === 'hap2' ? '5 3' : h === 'primary' ? '1.5 2.5' : '';
 
 /* ---------------------------------------------------------------- sortable tables */
 document.querySelectorAll('table.sortable').forEach(t => {
-  const ths = [...t.tHead.rows[0].cells];
+  const ths = [...t.tHead.rows[t.tHead.rows.length - 1].cells];
   ths.forEach((th, i) => th.addEventListener('click', () => {
     const asc = th.dataset.dir !== 'asc';
     ths.forEach(h => delete h.dataset.dir);
