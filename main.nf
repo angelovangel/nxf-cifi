@@ -298,6 +298,26 @@ process MAP_ONT {
     """
 }
 
+// mean ONT depth in 1 kb bins (wig) for IGV: a whole-genome view, which the BAM coverage track does not give
+process ONT_WIG {
+    tag "$name"
+    cpus 4
+    errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
+    publishDir "${params.outdir}/ont_mapping", mode: params.publish_mode
+    input:  tuple val(name), path(bam), path(csi)
+    output: path "${name}.ont.coverage.wig"
+    script:
+    """
+    samtools depth -aa -@ ${task.cpus} $bam | awk -v B=1000 '
+        function out() { if (n) printf "%.1f\\n", s / n; s = 0; n = 0 }
+        \$1 != c { out(); c = \$1; b = 0; print "fixedStep chrom=" c " start=1 step=" B " span=" B }
+        { k = int((\$2 - 1) / B); if (k != b) { out(); b = k } s += \$3; n++ }
+        END { out() }' > ${name}.ont.coverage.wig
+    """
+    stub:
+    "touch ${name}.ont.coverage.wig"
+}
+
 process CIFI_CONTACTS {
     tag "$name"
     label 'mid'
@@ -704,7 +724,9 @@ workflow {
         if (params.map_ont && params.ont) {
             def ch_targets = (params.cifi ? ch_scaf : ch_contigs)
                 .filter { n, _fa -> n.contains(".${mode}.hap1.") || n.contains(".${mode}.hap2.") }
-            ch_ont_cov = MAP_ONT(ch_targets, ch_ont).stats
+            MAP_ONT(ch_targets, ch_ont)
+            ch_ont_cov = MAP_ONT.out.stats
+            ONT_WIG(MAP_ONT.out.bam)
         } else if (params.map_ont) {
             log.warn "--map_ont without --ont: no ONT reads to map"
         }

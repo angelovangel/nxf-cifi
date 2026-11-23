@@ -10,7 +10,8 @@ writes, for <outdir>/igv/ (paths in the session are relative to it, so the outpu
   NAME.gaps.bed         N runs (from asm_stats.py)
   NAME.telomeres.bed    telomere repeat at sequence ends (asm_stats.py calls), length ~ copies x motif
   NAME.fa.fai           scaffolds only (contig FASTAs already have one in fasta/): IGV needs it next to the FASTA
-with ONT=1 the session also loads ../ont_mapping/NAME.ont.gaps.bed (ONT support of each join, from ont_gaps.sh)
+with ONT=1 the session also loads ../ont_mapping/NAME.ont.coverage.wig (1 kb bins), NAME.ont.gaps.bed (ONT support
+of each join, from ont_gaps.sh) and NAME.ont.bam
 """
 import os
 import sys
@@ -91,6 +92,7 @@ tracks.append(f"{name}.telomeres.bed")
 res = [f"    <Resource path={quoteattr(t)} type=\"bed\"/>" for t in tracks]
 if ont:
     bam = f"../ont_mapping/{name}.ont.bam"
+    res.append(f"    <Resource path={quoteattr(f'../ont_mapping/{name}.ont.coverage.wig')} type=\"wig\"/>")
     res.append(f"    <Resource path={quoteattr(f'../ont_mapping/{name}.ont.gaps.bed')} type=\"bed\"/>")
     res.append(f"    <Resource path={quoteattr(bam)} index={quoteattr(bam + '.csi')} type=\"bam\"/>")
 # the first sequence opens; the genome is the published FASTA (relative to this session file)

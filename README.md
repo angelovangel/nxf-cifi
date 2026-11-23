@@ -77,7 +77,7 @@ Query sequences are mapped in 10 Mb pieces and lifted back, so chromosome-scale 
 Add `--map_ont` to map the ONT reads to hap1 and hap2 (the scaffolds with `--cifi`, the contigs otherwise) with minimap2
 `-x lr:hq` (Q20+ ONT reads). `ont_mapping/` gets a sorted BAM with a
 CSI index (chromosomes can exceed the BAI limit) for IGV, `samtools coverage` per sequence and `samtools flagstat`.
-Each N gap (a scaffold join) is also checked: `<hap>.ont.gaps.tsv/.bed` say whether reads cross it (≥ 2 reads
+`<hap>.ont.coverage.wig` has the mean depth in 1 kb bins for a whole-genome view in IGV. Each N gap (a scaffold join) is also checked: `<hap>.ont.gaps.tsv/.bed` say whether reads cross it (≥ 2 reads
 ≥ 1 kb into both sides = supported) or stop at it with the rest clipped (≥ 2 such reads and none crossing = conflict,
 a possible misjoin). The report shows the mapping rate, mean depth and breadth per haplotype, and flags sequences ≥ 1 Mb at less than half or
 more than twice the haplotype's mean depth (collapsed repeats, duplications, contamination). With ultra-long data this
