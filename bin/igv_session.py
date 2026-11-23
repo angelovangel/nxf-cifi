@@ -95,7 +95,8 @@ if ont:
     bam = f"ont_mapping/{name}.ont.bam"
     res.append(f"    <Resource path={quoteattr(f'ont_mapping/{name}.ont.coverage.wig')} type=\"wig\"/>")
     res.append(f"    <Resource path={quoteattr(f'ont_mapping/{name}.ont.gaps.bed')} type=\"bed\"/>")
-    res.append(f"    <Resource path={quoteattr(bam)} index={quoteattr(bam + '.csi')} type=\"bam\"/>")
+    # no index= attribute: IGV does not resolve it relative to the session; it finds NAME.ont.bam.csi by itself
+    res.append(f"    <Resource path={quoteattr(bam)} type=\"bam\"/>")
 # the first sequence opens; the genome is the published FASTA (relative to this session file)
 first = next(iter(lengths), None)
 locus = f' locus="{first}"' if first else ""
