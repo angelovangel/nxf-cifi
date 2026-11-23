@@ -526,7 +526,8 @@ process DOTPLOT {
 process IGV_SESSION {
     tag "$name"
     errorStrategy { task.exitStatus in 137..140 && task.attempt <= 2 ? 'retry' : 'ignore' }   // optional step
-    publishDir "${params.outdir}/igv",   mode: params.publish_mode, pattern: '*.{igv.xml,bed}'
+    publishDir params.outdir,            mode: params.publish_mode, pattern: '*.igv.xml'   // top level: no ../ paths
+    publishDir "${params.outdir}/igv",   mode: params.publish_mode, pattern: '*.bed'
     publishDir "${params.outdir}/fasta", mode: params.publish_mode, pattern: '*.fai'   // scaffold FASTA index for IGV
     input:  tuple val(name), path(fa, stageAs: 'in/*'), path(telo, stageAs: 'in/*'), path(gaps, stageAs: 'in/*'), path(agp, stageAs: 'in/*')   // agp: [] for contigs
     output: path "${name}.*"

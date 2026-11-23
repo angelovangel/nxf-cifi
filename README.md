@@ -128,8 +128,9 @@ fasta/                            contigs (+ .fai) and <hap>.scaffolds.fa
 scaffolds/<hap>/                  yahs output (scaffold FASTA is in fasta/), <hap>_JBAT.* (Juicebox), .hic, .pretext + snapshot PNGs
 eval/{stats,telomeres,compleasm,merqury}
 dotplots/                         <query>_vs_<target>.dotplot.{png,json,tsv} (+ .paf.gz); tsv = % of each side aligned, inverted bp
-igv/                              <hap>.igv.xml: IGV session per haplotype (File > Open Session): FASTA + contigs (AGP), gaps,
-                                  telomeres, ONT BAM + join support (--map_ont); paths are relative, keep igv/ next to fasta/.
+<hap>.igv.xml                     IGV session per haplotype (File > Open Session): FASTA + contigs (AGP), gaps, telomeres,
+                                  ONT BAM + join support (--map_ont); paths relative to the output folder (fasta/, igv/, ont_mapping/)
+igv/                              the session's BED tracks (contigs, gaps, telomeres)
                                   Contig track: YaHS AGP (found next to --assembly scaffolds of an earlier run),
                                   otherwise the pieces between N gaps
 pipeline_info/                    timeline, resource report, trace; command.txt (nextflow command line)

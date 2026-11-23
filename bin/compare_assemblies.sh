@@ -589,7 +589,7 @@ if ONT:
                      (f'{o[9]["no_evidence"]:,}', "", o[9]["no_evidence"])]) for o in ONT])
         + ('' if not ONT_GAP else '<details><summary>Joins not supported by ONT reads '
            f'({sum(1 for g in ONT_GAP if g[6] == "conflict")} conflict, {sum(1 for g in ONT_GAP if g[6] != "conflict")} no evidence)'
-           '</summary><p class="note">Conflicts first: check them in the IGV session (<code>igv/</code>, track '
+           '</summary><p class="note">Conflicts first: check them in the IGV session (<code>IGV session (<code>igv/</code>, track lt;hapIGV session (<code>igv/</code>, track gt;.igv.xml</code>, track '
            '&quot;ONT support of joins&quot;) and the contact map in Juicebox.</p>' +
            table(["Haplotype", "Scaffold", "Gap start", "Gap end", "Spanning reads", "Broken reads", "Status"],
                  [[(g[0], ""), (g[1], ""), (f"{g[2]:,}", "", g[2]), (f"{g[3]:,}", "", g[3]), (str(g[4]), "", g[4]),
